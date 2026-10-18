@@ -1,18 +1,11 @@
 {
-  "name": "autofarmer-discord-bot",
+  "name": "autofarm-discord-bot",
   "version": "1.0.0",
-  "description": "AutoFarmer Discord member utility bot",
+  "description": "AutoFarm Discord OAuth2 member utility bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [
-    "discord",
-    "bot",
-    "autofarm"
-  ],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
