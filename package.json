@@ -1,5 +1,5 @@
 {
-  "name": "discordfarmer",
+  "name": "farmer",
   "version": "1.0.0",
   "description": "Flex Farmer Bot",
   "main": "index.js",
@@ -10,6 +10,6 @@
     "discord.js": "^14.14.0",
     "express": "^4.19.2",
     "mongoose": "^8.3.1",
-    "node-fetch": "^2.7.0"
+    "dotenv": "^16.4.5"
   }
 }
