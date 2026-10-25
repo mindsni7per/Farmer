@@ -1,7 +1,7 @@
 {
-  "name": "autofarm-discord-bot",
+  "name": "farm-discord-bot",
   "version": "1.0.0",
-  "description": "AutoFarm Discord OAuth2 member utility bot",
+  "description": "Farm Discord OAuth2 member utility bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
