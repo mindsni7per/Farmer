@@ -16,7 +16,6 @@ const express = require('express');
 const fetch = require('node-fetch');
 require('dotenv').config();
 
-// --- Configuration & Express Web Server Setup ---
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -32,12 +31,12 @@ let discordClient = null;
 
 let lastBoostStickyMessage = null; 
 
+// Channel IDs updated according to your exact channel requirements
 const CHANNELS = {
-    AUTORESTOCK: '1563253480553054358',       
-    FARM_LOG: '1563253450693808210',          
-    VERIFICATION_LOG: '1563253454653235261',  
-    BOT_COMMANDS: '1563253453520642140',
-    AUTO_DELETE: '1563253483824746659'        
+    AUTORESTOCK: '1563253480553054358',       // Restocks channel (NO auto-delete)
+    FARM_LOG: '1563253450693808210',          // ,join command logs
+    VERIFICATION_LOG: '1563253454653235261',  // Verification logs
+    AUTO_DELETE: '1563253483824746659'        // Only this channel auto-deletes messages
 };
 
 const client = new Client({
@@ -111,7 +110,6 @@ app.get('/', async (req, res) => {
             allTimeAuthCount++;
             console.log(`[VERIFY SUCCESS] User: ${userData.username} (${userData.id}) | Total Stock: ${tokenDatabase.length}`);
 
-            // Post log to verification channel
             if (client.isReady()) {
                 try {
                     let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
@@ -129,16 +127,9 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            if (autoRestockEnabled && restockCounter >= 30) {
-                const addedAmount = restockCounter;
-                restockCounter = 0; 
-                await sendRestockAnnouncement(addedAmount);
-            }
-
             return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully!</h1><p>You can close this window and return to Discord.</p></body></html>`);
         } else {
-            console.error('[OAUTH TOKEN ERROR]', oauthData);
-            return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Failed</h1><p>Token exchange failed. Check environment configuration.</p></body></html>`);
+            return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Failed</h1><p>Token exchange failed.</p></body></html>`);
         }
     } catch (error) {
         console.error('[OAUTH EXCEPTION]', error);
@@ -148,25 +139,21 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
-// --- Discord Bot Functions & Logic ---
-async function sendRestockAnnouncement(amountAdded) {
-    if (!client.isReady() || tokenDatabase.length === 0) return; 
+// Helper function to send restock announcement referencing your exact channel links format
+async function sendRestockAnnouncement(channel, amountAdded) {
     try {
-        const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
-        if (restockChannel) {
-            const restockMessage = 
-                `**Restock Alert!**\n\n` +
-                `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
-                `> Current Stock: **${tokenDatabase.length}**\n\n` +
-                `> **Want more per command?**\n` +
-                `-# <#1561454732055158904> / <#1563253473238065326>\n\n` +
-                `> **Quick Head To Channel!**\n` +
-                `-# <#1563253483824746659> / <#1561453186810642522>\n` +
-                `-# @everyone`;
+        const restockMessage = 
+            `**Restock Alert!**\n\n` +
+            `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
+            `> Current Stock: **${tokenDatabase.length}**\n\n` +
+            `> **Want more per command?**\n` +
+            `-# <#1563253471145361572> / <#1563253473238065326>\n\n` +
+            `> **Quick Head To Channel!**\n` +
+            `-# <#1563253483824746659> / <#1563253479059886223>\n\n` +
+            `@everyone`;
 
-            const sentMessage = await restockChannel.send({ content: restockMessage });
-            await sentMessage.react('☑️');
-        }
+        const sentMessage = await channel.send({ content: restockMessage });
+        await sentMessage.react('☑️');
     } catch (announcementErr) {
         console.error('Failed restock announcement:', announcementErr);
     }
@@ -192,6 +179,24 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
+    // Handle Button Interactions for Restock Prompt
+    if (interaction.isButton()) {
+        if (interaction.customId === 'restock_yes') {
+            await interaction.update({ content: '✅ Restock announcement confirmed! Sending to restock channel...', components: [] });
+            try {
+                const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
+                if (restockChannel) {
+                    await sendRestockAnnouncement(restockChannel, restockCounter);
+                }
+            } catch (err) {
+                console.error('Failed to send restock announcement via button:', err);
+            }
+            return;
+        } else if (interaction.customId === 'restock_no') {
+            return interaction.update({ content: '❌ Restock announcement cancelled.', components: [] });
+        }
+    }
+
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName === 'say') {
         const textMessage = interaction.options.getString('message');
@@ -253,6 +258,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    // Only auto-delete messages in the designated AUTO_DELETE channel. Restocks channel will NEVER auto-delete.
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try { if (message.deletable) await message.delete(); } catch (err) {}
@@ -329,12 +335,12 @@ client.on('messageCreate', async message => {
         const now = Date.now();
         const last24hCount = tokenDatabase.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
         const authEmbed = new EmbedBuilder()
-            .setTitle('⚡ Authorization & Stock Statistics')
+            .setTitle(' Auth Stats')
             .setColor(0x5865F2)
             .addFields(
-                { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: '🌐 All-Time', value: `\`${allTimeAuthCount}\` total authorizations`, inline: true },
-                { name: '📦 Current Stock', value: `\`${tokenDatabase.length}\` active accounts`, inline: true }
+                { name: ' Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
+                { name: ' All-Time', value: `\`${allTimeAuthCount}\` total authorizations`, inline: true },
+                { name: ' Current Stock', value: `\`${tokenDatabase.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
@@ -354,17 +360,29 @@ client.on('messageCreate', async message => {
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
+    // ,restock Command with [Yes] / [No] Prompt for posting in the restock channel
     if (command === 'restock') {
-        const amount = parseInt(args[0]) || 30;
-        await sendRestockAnnouncement(amount);
-        try { if (message.deletable) await message.delete(); } catch(e){}
-        return;
+        const amount = parseInt(args[0]) || tokenDatabase.length;
+        restockCounter = amount;
+        allTimeAuthCount += amount;
+
+        const promptEmbed = new EmbedBuilder()
+            .setTitle(' Restock Stock Prepared')
+            .setDescription(`Successfully stocked **${amount}** authorized users!\n\n**Do you want to send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
+            .setColor(0x5865F2);
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('restock_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('restock_no').setLabel('No').setStyle(ButtonStyle.Danger)
+        );
+
+        return message.channel.send({ embeds: [promptEmbed], components: [row] });
     }
 
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
         tokenDatabase.splice(0, amount);
-        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
+        return message.channel.send(` Removed **${amount}** accounts from stock. Current stock: \`${tokenDatabase.length}\`.`);
     }
 
     if (command === 'join') {
@@ -396,7 +414,7 @@ client.on('messageCreate', async message => {
         if (allowedLimit !== Infinity) {
             const limit = Math.min(allowedLimit, tokenDatabase.length);
             tokensToUse = tokenDatabase.slice(0, limit);
-            message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
+            message.channel.send(` Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
         await message.channel.send(`Flex Farmer attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
@@ -425,7 +443,7 @@ client.on('messageCreate', async message => {
             let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
-                    .setTitle('📊 Farm Execution Log')
+                    .setTitle(' Farm Execution Log')
                     .setDescription(`**User:** <@${message.author.id}>\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
                     .setColor(0x5865F2)
                     .setTimestamp();
