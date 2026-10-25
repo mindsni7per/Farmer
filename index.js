@@ -14,8 +14,8 @@ const {
 } = require('discord.js');
 const express = require('express');
 const fetch = require('node-fetch');
-const { QuickDB } = require("quick.db");
-const db = new QuickDB(); // Persistent database instance
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -23,6 +23,24 @@ const PORT = process.env.PORT || 8080;
 
 const DEFAULT_PREFIX = ','; 
 let currentPrefix = DEFAULT_PREFIX;
+
+// --- Persistent JSON File Storage Setup ---
+const DB_FILE = path.join(__dirname, 'database.json');
+
+function readDB() {
+    try {
+        if (!fs.existsSync(DB_FILE)) {
+            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0 }, null, 2));
+        }
+        return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (e) {
+        return { users: {}, restockCounter: 0, allTimeAuthCount: 0 };
+    }
+}
+
+function writeDB(data) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
 
 let discordClient = null;
 let lastBoostStickyMessage = null; 
@@ -85,8 +103,8 @@ app.get('/', async (req, res) => {
                 return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Failed to fetch Discord profile.</p></body></html>`);
             }
 
-            // Save or Update user in persistent storage
-            await db.set(`user_${userData.id}`, {
+            let dbData = readDB();
+            dbData.users[userData.id] = {
                 user_id: userData.id,
                 username: userData.username,
                 avatar: userData.avatar,
@@ -95,12 +113,12 @@ app.get('/', async (req, res) => {
                 refresh_token: oauthData.refresh_token,
                 authorized_at: Date.now(),
                 expires_at: Date.now() + (oauthData.expires_in * 1000)
-            });
+            };
+            dbData.restockCounter = (dbData.restockCounter || 0) + 1;
+            dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + 1;
+            writeDB(dbData);
 
-            await db.add('restockCounter', 1);
-            await db.add('allTimeAuthCount', 1);
-
-            const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+            const totalStock = Object.keys(dbData.users).length;
 
             if (client.isReady()) {
                 try {
@@ -108,7 +126,7 @@ app.get('/', async (req, res) => {
                     if (verifLogChannel) {
                         const logEmbed = new EmbedBuilder()
                             .setTitle('⚡ New User Verified')
-                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${allUsers.length}\``)
+                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${totalStock}\``)
                             .setColor(0x00FF00)
                             .setTimestamp();
 
@@ -133,11 +151,12 @@ app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on
 
 async function sendRestockAnnouncement(channel, amountAdded) {
     try {
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        let dbData = readDB();
+        const totalStock = Object.keys(dbData.users).length;
         const restockMessage = 
             `**Restock Alert!**\n\n` +
             `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
-            `> Current Stock: **${allUsers.length}**\n\n` +
+            `> Current Stock: **${totalStock}**\n\n` +
             `> **Want more per command?**\n` +
             `-# <#1563253471145361572> / <#1563253473238065326>\n\n` +
             `> **Quick Head To Channel!**\n` +
@@ -177,8 +196,8 @@ client.on('interactionCreate', async interaction => {
             try {
                 const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
                 if (restockChannel) {
-                    const counter = (await db.get('restockCounter')) || 0;
-                    await sendRestockAnnouncement(restockChannel, counter);
+                    let dbData = readDB();
+                    await sendRestockAnnouncement(restockChannel, dbData.restockCounter || 0);
                 }
             } catch (err) {
                 console.error('Failed to send restock announcement via button:', err);
@@ -330,31 +349,32 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'stock') {
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
-        const restockCounter = (await db.get('restockCounter')) || 0;
-        const lastRestockCount = Math.min(restockCounter, allUsers.length);
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
+        const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
         return message.channel.send({ embeds: [new EmbedBuilder().setTitle('📦 Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(0x595B5C)] });
     }
 
     if (command === 'auth' || command === 'authed') {
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
         const now = Date.now();
-        const last24hCount = allUsers.filter(item => item.value && item.value.authorized_at && item.value.authorized_at >= (now - 86400000)).length;
-        const allTimeAuthCount = (await db.get('allTimeAuthCount')) || 0;
+        const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
 
         const authEmbed = new EmbedBuilder()
             .setTitle('⚡ Authorization & Stock Statistics')
             .setColor(0x5865F2)
             .addFields(
                 { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: '🌐 All-Time', value: `\`${allTimeAuthCount}\` total authorizations`, inline: true },
-                { name: '📦 Current Stock', value: `\`${allUsers.length}\` active accounts`, inline: true }
+                { name: '🌐 All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
+                { name: '📦 Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
         const uptimeSeconds = Math.floor(client.uptime / 1000);
         const hours = Math.floor(uptimeSeconds / 3600);
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
@@ -363,17 +383,19 @@ client.on('messageCreate', async message => {
             .setTitle('🟢 Flex Farmer Status')
             .setColor(0x00FF00)
             .addFields(
-                { name: '📊 Active Verified Stock', value: `\`${allUsers.length}\` accounts`, inline: true },
+                { name: '📊 Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
                 { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
     if (command === 'restock') {
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
-        const amount = parseInt(args[0]) || allUsers.length;
-        await db.set('restockCounter', amount);
-        await db.add('allTimeAuthCount', amount);
+        const dbData = readDB();
+        const users = Object.values(dbData.users);
+        const amount = parseInt(args[0]) || users.length;
+        dbData.restockCounter = amount;
+        dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + amount;
+        writeDB(dbData);
 
         const promptEmbed = new EmbedBuilder()
             .setTitle('📦 Restock Stock Prepared')
@@ -390,20 +412,23 @@ client.on('messageCreate', async message => {
 
     if (command === 'remove') {
         const amount = parseInt(args[0]) || 1;
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
-        for (let i = 0; i < Math.min(amount, allUsers.length); i++) {
-            await db.delete(allUsers[i].id);
+        let dbData = readDB();
+        let userKeys = Object.keys(dbData.users);
+        for (let i = 0; i < Math.min(amount, userKeys.length); i++) {
+            delete dbData.users[userKeys[i]];
         }
-        const updatedUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
-        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${updatedUsers.length}\`.`);
+        writeDB(dbData);
+        const remainingStock = Object.keys(dbData.users).length;
+        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
 
     if (command === 'join') {
         const targetGuildId = args[0];
         if (!targetGuildId) return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
 
-        const allUsers = (await db.all()).filter(i => i.id.startsWith('user_'));
-        if (allUsers.length === 0) {
+        const dbData = readDB();
+        let tokensToUse = Object.values(dbData.users);
+        if (tokensToUse.length === 0) {
             return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
         }
 
@@ -424,7 +449,6 @@ client.on('messageCreate', async message => {
             }
         }
 
-        let tokensToUse = allUsers.map(u => u.value);
         if (allowedLimit !== Infinity) {
             const limit = Math.min(allowedLimit, tokensToUse.length);
             tokensToUse = tokensToUse.slice(0, limit);
