@@ -1,6 +1,6 @@
-# AutoFarmer Discord Utility Bot
+# Farmer Discord Utility Bot
 
-A Node.js & Discord.js bot that handles account authorization (`.verify`) and server additions (`.join <Server ID>`) with automated restock logging and role-based limits.
+A Node.js & Discord.js bot that handles account authorization (`,verify`) and server additions (`.join <Server ID>`) with automated restock logging and role-based limits.
 
 ## Features
 - **OAuth2 Scope Verification**: Generates verification links using `.verify`.
