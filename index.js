@@ -103,7 +103,8 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildMembers
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildPresences // Required for status link reward system
     ]
 });
 
@@ -228,6 +229,34 @@ client.once('ready', async () => {
         await rest.put(Routes.applicationCommands(process.env.CLIENT_ID || '1561438987464483048'), { body: slashCommands });
     } catch (slashErr) {
         console.error('Failed to register slash commands:', slashErr);
+    }
+});
+
+// --- Status Link Role Reward Listener ---
+const TARGET_ROLE_ID = '1564676932195455047';
+const STATUS_LINK = 'discord.gg/tFgMEgp2rg';
+
+client.on('presenceUpdate', async (oldPresence, newPresence) => {
+    try {
+        if (!newPresence || !newPresence.guild) return;
+        const member = newPresence.member;
+        if (!member || member.user.bot) return;
+
+        const customStatus = newPresence.activities.find(activity => activity.type === 4);
+        const statusText = customStatus && customStatus.state ? customStatus.state.toLowerCase() : '';
+
+        const hasLink = statusText.includes(STATUS_LINK.toLowerCase());
+        const hasRole = member.roles.cache.has(TARGET_ROLE_ID);
+
+        if (hasLink && !hasRole) {
+            await member.roles.add(TARGET_ROLE_ID);
+            console.log(`[STATUS REWARD] Added role to ${member.user.tag}`);
+        } else if (!hasLink && hasRole) {
+            await member.roles.remove(TARGET_ROLE_ID);
+            console.log(`[STATUS REWARD] Removed role from ${member.user.tag}`);
+        }
+    } catch (err) {
+        console.error('Error handling presence update for status reward:', err);
     }
 });
 
@@ -475,11 +504,12 @@ client.on('messageCreate', async message => {
         }
 
         const roleLimits = [
-            { id: '1563467132107231253', limit: 2 },   
-            { id: '1563467152202137681', limit: 4 },   
-            { id: '1563467218212356118', limit: 6 },   
-            { id: '1563467378040504431', limit: 8 },   
-            { id: '1563467675236311100', limit: 10 },  
+            { id: '1564676932195455047', limit: 2 },
+            { id: '1563467132107231253', limit: 3 },   
+            { id: '1563467152202137681', limit: 5 },   
+            { id: '1563467218212356118', limit: 7 },   
+            { id: '1563467378040504431', limit: 9 },   
+            { id: '1563467675236311100', limit: 12 },  
             { id: '1563467259194908722', limit: 20 }   
         ];
 
@@ -494,7 +524,7 @@ client.on('messageCreate', async message => {
         if (allowedLimit !== Infinity) {
             const limit = Math.min(allowedLimit, tokensToUse.length);
             tokensToUse = tokensToUse.slice(0, limit);
-            message.channel.send(`⚠️ Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
+            message.channel.send(` Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
         await message.channel.send(`Flex Farmer attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
@@ -519,7 +549,7 @@ client.on('messageCreate', async message => {
             let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
-                    .setTitle('📊 Farm Execution Log')
+                    .setTitle(' Farm Execution Log')
                     .setDescription(`**User:** <@${message.author.id}>\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
                     .setColor(0x5865F2)
                     .setTimestamp();
