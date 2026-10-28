@@ -111,21 +111,39 @@ const client = new Client({
     ]
 });
 
-// --- Express Route for Native Discord OAuth Popup Callback ---
+// --- Clean Web Server Routes for OAuth Callbacks ---
 app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
 
     if (error) {
-        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Cancelled</h1><p>Authorization was declined.</p></body></html>`);
+        return res.send(`
+            <html>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                        <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Authorization Cancelled</h2>
+                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">You declined the authorization request. You can safely close this window.</p>
+                    </div>
+                </body>
+            </html>
+        `);
     }
     
     if (!code) {
-        return res.send(`<html><body style="background:#111;color:#fff;text-align:center;padding-top:50px;"><h1>Flex Farmer</h1><p>OAuth server is running successfully.</p></body></html>`);
+        return res.send(`
+            <html>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                        <h2 style="color:#f5f5f7;margin-bottom:15px;font-weight:600;">Flex Farmer Authentication</h2>
+                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">OAuth authentication server is operating normally.</p>
+                    </div>
+                </body>
+            </html>
+        `);
     }
 
     try {
-        const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
+        const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1564997108908556369';
         const tokenParams = new URLSearchParams({
             client_id: verificationClientId,
             client_secret: process.env.CLIENT_SECRET,
@@ -146,7 +164,16 @@ app.get('/', async (req, res) => {
             const userData = userRes.data;
 
             if (!userData || !userData.id) {
-                return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Error</h1><p>Failed to fetch Discord profile.</p></body></html>`);
+                return res.send(`
+                    <html>
+                        <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                            <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                                <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
+                                <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Failed to retrieve your Discord user profile.</p>
+                            </div>
+                        </body>
+                    </html>
+                `);
             }
 
             let dbData = readDB();
@@ -183,14 +210,41 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully</h1><p>You can close this window and return to Discord.</p></body></html>`);
+            return res.send(`
+                <html>
+                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                            <h2 style="color:#55ff55;margin-bottom:15px;font-weight:600;">Verification Successful</h2>
+                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
+                        </div>
+                    </body>
+                </html>
+            `);
         } else {
             console.error('[OAUTH TOKEN ERROR]', tokenRes.data);
-            return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Verification Failed</h1><p>Token exchange rejected by Discord.</p></body></html>`);
+            return res.send(`
+                <html>
+                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                            <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
+                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord.</p>
+                        </div>
+                    </body>
+                </html>
+            `);
         }
     } catch (error) {
         console.error('[OAUTH EXCEPTION]', error);
-        return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Server Error</h1><p>Exception during verification.</p></body></html>`);
+        return res.send(`
+            <html>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                        <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Server Error</h2>
+                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">An exception occurred during verification processing.</p>
+                    </div>
+                </body>
+            </html>
+        `);
     }
 });
 
@@ -229,7 +283,7 @@ client.once('ready', async () => {
     console.log(`Flex Farmer logged in as ${client.user.tag}! Prefix: '${currentPrefix}'`);
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID || '1561438987464483048'), { body: slashCommands });
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID || '1564997108908556369'), { body: slashCommands });
     } catch (slashErr) {
         console.error('Failed to register slash commands:', slashErr);
     }
@@ -395,9 +449,7 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'verify' || command === 'link') {
-        const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
-        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
-        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${verificationClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify+guilds.join`;
+        const oauthUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
@@ -441,7 +493,7 @@ client.on('messageCreate', async message => {
 
     if (command === 'bot' || command === 'invite') {
         if (message.author.id !== OWNER_ID) return;
-        const inviteUrl = 'https://discord.com/api/oauth2/authorize?client_id=1561438987464483048&permissions=8&scope=bot+applications.commands';
+        const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add Bot').setStyle(ButtonStyle.Link).setURL(inviteUrl));
         return message.channel.send({ components: [row] });
     }
@@ -484,8 +536,8 @@ client.on('messageCreate', async message => {
             .setTitle('Flex Farmer Status')
             .setColor(EMBED_COLOR)
             .addFields(
-                { name: 'Active Verified Stock', value: `\`{users.length}\` accounts`, inline: true },
-                { name: 'Uptime', value: `\`{hours}h {minutes}m {seconds}s\``, inline: true }
+                { name: 'Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
+                { name: 'Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
