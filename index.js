@@ -26,6 +26,10 @@ let currentPrefix = DEFAULT_PREFIX;
 const OWNER_ID = '1481977461053984845';
 const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 
+// Standardized Webhook Client
+const EXECUTION_WEBHOOK_URL = 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ';
+const webhookClient = new WebhookClient({ url: EXECUTION_WEBHOOK_URL });
+
 // --- Built-in File Persistence Setup ---
 const DB_FILE = path.join(__dirname, 'database.json');
 
@@ -111,7 +115,7 @@ const client = new Client({
     ]
 });
 
-// --- Clean Web Server Routes for OAuth Callbacks ---
+// --- Modern, Larger Centered Web Server Routes for OAuth Callbacks ---
 app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
@@ -119,10 +123,10 @@ app.get('/', async (req, res) => {
     if (error) {
         return res.send(`
             <html>
-                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                        <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Authorization Cancelled</h2>
-                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">You declined the authorization request. You can safely close this window.</p>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                        <h2 style="color:#ff5555;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Authorization Cancelled</h2>
+                        <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">You declined the authorization request. You can safely close this window and return to Discord.</p>
                     </div>
                 </body>
             </html>
@@ -132,10 +136,10 @@ app.get('/', async (req, res) => {
     if (!code) {
         return res.send(`
             <html>
-                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                        <h2 style="color:#f5f5f7;margin-bottom:15px;font-weight:600;">Flex Farmer Authentication</h2>
-                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">OAuth authentication server is operating normally.</p>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                        <h2 style="color:#f5f5f7;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Flex Farmer Authentication</h2>
+                        <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">OAuth authentication server is operating normally.</p>
                     </div>
                 </body>
             </html>
@@ -145,13 +149,14 @@ app.get('/', async (req, res) => {
     try {
         const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1564997108908556369';
         const verificationClientSecret = process.env.VERIFICATION_CLIENT_SECRET || process.env.CLIENT_SECRET;
+        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app/';
 
         const tokenParams = new URLSearchParams({
             client_id: verificationClientId,
             client_secret: verificationClientSecret,
             grant_type: 'authorization_code',
             code: code,
-            redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app/',
+            redirect_uri: redirectUri,
         }).toString();
 
         const tokenRes = await postHttps('https://discord.com/api/oauth2/token', tokenParams, {
@@ -162,10 +167,10 @@ app.get('/', async (req, res) => {
             console.error('[OAUTH TOKEN ERROR DETAILS] Status:', tokenRes.status, 'Data:', JSON.stringify(tokenRes.data));
             return res.send(`
                 <html>
-                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                            <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
-                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord (Check VERIFICATION_CLIENT_SECRET in Railway).</p>
+                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                        <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                            <h2 style="color:#ff5555;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Verification Failed</h2>
+                            <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">Token exchange was rejected by Discord. Please check your Railway environment variables.</p>
                         </div>
                     </body>
                 </html>
@@ -181,10 +186,10 @@ app.get('/', async (req, res) => {
         if (!userData || !userData.id) {
             return res.send(`
                 <html>
-                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                            <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
-                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Failed to retrieve your Discord user profile.</p>
+                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                        <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                            <h2 style="color:#ff5555;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Verification Failed</h2>
+                            <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">Failed to retrieve your Discord user profile.</p>
                         </div>
                     </body>
                 </html>
@@ -227,10 +232,10 @@ app.get('/', async (req, res) => {
 
         return res.send(`
             <html>
-                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                        <h2 style="color:#55ff55;margin-bottom:15px;font-weight:600;">Verification Successful</h2>
-                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                        <h2 style="color:#55ff55;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Verification Successful</h2>
+                        <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
                     </div>
                 </body>
             </html>
@@ -239,10 +244,10 @@ app.get('/', async (req, res) => {
         console.error('[OAUTH EXCEPTION]', error);
         return res.send(`
             <html>
-                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                        <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Server Error</h2>
-                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">An exception occurred during verification processing.</p>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+                    <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
+                        <h2 style="color:#ff5555;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Server Error</h2>
+                        <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">An exception occurred during verification processing.</p>
                     </div>
                 </body>
             </html>
@@ -252,67 +257,8 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
-async function sendRestockAnnouncement(channel, amountAdded) {
-    try {
-        let dbData = readDB();
-        const totalStock = Object.keys(dbData.users).length;
-        const restockMessage = 
-            `**Restock Alert**\n\n` +
-            `**Flex Network** has restocked with **${amountAdded}** accounts.\n\n` +
-            `> Current Stock: **${totalStock}**\n\n` +
-            `> **Support Channels**\n` +
-            `-# <#1563253471145361572> / <#1563253473238065326>\n\n` +
-            `> **Quick Links**\n` +
-            `-# <#1563253483824746659> / <#1563253479059886223>\n\n` +
-            `@everyone`;
-
-        await channel.send({ content: restockMessage });
-    } catch (announcementErr) {
-        console.error('Failed restock announcement:', announcementErr);
-    }
-}
-
-const slashCommands = [
-    new SlashCommandBuilder()
-        .setName('say')
-        .setDescription('Send custom message')
-        .addStringOption(option => option.setName('message').setDescription('Content').setRequired(true))
-        .addBooleanOption(option => option.setName('embed').setDescription('Embed mode').setRequired(false))
-        .addStringOption(option => option.setName('webhook_url').setDescription('Webhook URL').setRequired(false))
-].map(command => command.toJSON());
-
 client.once('ready', async () => {
     console.log(`Flex Farmer logged in as ${client.user.tag}! Prefix: '${currentPrefix}'`);
-    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-    try {
-        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID || '1564997108908556369'), { body: slashCommands });
-    } catch (slashErr) {
-        console.error('Failed to register slash commands:', slashErr);
-    }
-});
-
-// --- Status Link Role Reward Listener ---
-const TARGET_ROLE_ID = '1564676932195455047';
-const STATUS_LINK = 'discord.gg/tFgMEgp2rg';
-
-client.on('presenceUpdate', async (oldPresence, newPresence) => {
-    try {
-        if (!newPresence || !newPresence.guild) return;
-        const member = newPresence.member;
-        if (!member || member.user.bot) return;
-
-        const customStatus = newPresence.activities.find(activity => activity.type === 4);
-        const statusText = customStatus && customStatus.state ? customStatus.state.toLowerCase() : '';
-
-        const hasLink = statusText.includes(STATUS_LINK.toLowerCase());
-        const hasRole = member.roles.cache.has(TARGET_ROLE_ID);
-
-        if (hasLink && !hasRole) {
-            await member.roles.add(TARGET_ROLE_ID);
-        } else if (!hasLink && hasRole) {
-            await member.roles.remove(TARGET_ROLE_ID);
-        }
-    } catch (err) {}
 });
 
 // --- 2-Hour Inactivity Kick Tracking ---
@@ -335,86 +281,8 @@ client.on('guildMemberAdd', member => {
     pendingJoins.set(member.id, timer);
 });
 
-client.on('interactionCreate', async interaction => {
-    if (interaction.isButton()) {
-        if (interaction.customId === 'restock_yes') {
-            await interaction.update({ content: 'Restock announcement confirmed. Sending to restock channel.', components: [] });
-            try {
-                const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
-                if (restockChannel) {
-                    let dbData = readDB();
-                    await sendRestockAnnouncement(restockChannel, dbData.restockCounter || 0);
-                }
-            } catch (err) {}
-            return;
-        } else if (interaction.customId === 'restock_no') {
-            return interaction.update({ content: 'Restock announcement cancelled.', components: [] });
-        }
-    }
-
-    if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName === 'say') {
-        if (interaction.user.id !== OWNER_ID) {
-            return interaction.reply({ content: 'Only the bot owner can use this command.', ephemeral: true });
-        }
-        const textMessage = interaction.options.getString('message');
-        const isEmbed = interaction.options.getBoolean('embed') || false;
-        const webhookUrl = interaction.options.getString('webhook_url');
-
-        try {
-            if (webhookUrl) {
-                const whClient = new WebhookClient({ url: webhookUrl });
-                if (isEmbed) {
-                    await whClient.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
-                } else {
-                    await whClient.send({ content: textMessage });
-                }
-                return interaction.reply({ content: 'Sent via Webhook.', ephemeral: true });
-            }
-
-            if (isEmbed) {
-                await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
-            } else {
-                await interaction.channel.send({ content: textMessage });
-            }
-            return interaction.reply({ content: 'Sent.', ephemeral: true });
-        } catch (err) {
-            return interaction.reply({ content: `Failed: ${err.message}`, ephemeral: true });
-        }
-    }
-});
-
-async function sendBoostStickyPanel(channel) {
-    const boostContent = 
-        `**FLEX | BOOST REWARDS**\n\n` +
-        `Boost the server to earn higher rank tier limits.\n\n` +
-        `2 Boosts = <@&1563467675236311100>\n\n` +
-        `4 Boosts = <@&1563467259194908722>\n\n\n` +
-        `Ranks are active for 2-3 weeks.\n` +
-        `Ranks are not automatically assigned.\n` +
-        `Open a ticket in <#1563253473238065326> to claim your rank.`;
-
-    const stickyEmbed = new EmbedBuilder().setDescription(boostContent).setColor(EMBED_COLOR); 
-    if (lastBoostStickyMessage) {
-        try { await lastBoostStickyMessage.delete(); } catch (e) {}
-    }
-    lastBoostStickyMessage = await channel.send({ embeds: [stickyEmbed] });
-}
-
 client.on('messageCreate', async message => {
     const rawContent = message.content.trim();
-
-    const isBoostMessage = [
-        MessageType.GuildBoost,
-        MessageType.GuildBoostTier1,
-        MessageType.GuildBoostTier2,
-        MessageType.GuildBoostTier3
-    ].includes(message.type);
-
-    if (isBoostMessage) {
-        await sendBoostStickyPanel(message.channel);
-        return;
-    }
 
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
@@ -424,169 +292,26 @@ client.on('messageCreate', async message => {
 
     if (message.author.bot) return;
 
-    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === '.rbot') {
-        const rbotEmbed = new EmbedBuilder().setDescription('Use the bot via the button below.').setColor(EMBED_COLOR);
-        const rbotButton = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setLabel('Use Bot').setStyle(ButtonStyle.Link).setURL('https://discord.gg/ZK3Er7Xgdq')
-        );
-        await message.channel.send({ embeds: [rbotEmbed], components: [rbotButton] });
-        try { if (message.deletable) await message.delete(); } catch(e){}
-        return;
-    }
-
     if (!rawContent.startsWith(currentPrefix)) return;
 
     const args = rawContent.slice(currentPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
     if (message.author.id !== OWNER_ID && command !== 'join') {
-        return message.channel.send('Only the join command is available to regular members.');
-    }
-
-    if (command === 'stickboost') {
-        if (message.author.id !== OWNER_ID) return;
-        await sendBoostStickyPanel(message.channel);
-        try { if (message.deletable) await message.delete(); } catch(e){}
-        return;
-    }
-
-    if (command === 'verify' || command === 'link') {
-        const oauthUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&scope=guilds.join+identify';
-
-        const embed = new EmbedBuilder()
-            .setTitle('Account Verification')
-            .setDescription('Click the button below to authorize your account.')
-            .setColor(EMBED_COLOR);
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('Verify Account')
-                .setStyle(ButtonStyle.Link)
-                .setURL(oauthUrl)
-        );
-
-        return message.channel.send({ embeds: [embed], components: [row] });
-    }
-
-    if (command === 'help') {
-        if (message.author.id !== OWNER_ID) return;
-        const helpEmbed = new EmbedBuilder()
-            .setTitle('Member Farm - Command Panel')
-            .setDescription(`Current prefix: \`${currentPrefix}\` — change with \`${currentPrefix}prefix set <prefix>\``)
-            .setColor(EMBED_COLOR)
-            .addFields(
-                { 
-                    name: 'Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates verification link\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
-                },
-                { 
-                    name: 'Config & Management', 
-                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles auto-restocks\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
-                },
-                { 
-                    name: 'Admin & Control', 
-                    value: `\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
-                }
-            )
-            .setFooter({ text: 'Member Farm Utility' });
-
-        return message.channel.send({ embeds: [helpEmbed] });
-    }
-
-    if (command === 'bot' || command === 'invite') {
-        if (message.author.id !== OWNER_ID) return;
-        const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add Bot').setStyle(ButtonStyle.Link).setURL(inviteUrl));
-        return message.channel.send({ components: [row] });
-    }
-
-    if (command === 'stock') {
-        if (message.author.id !== OWNER_ID) return;
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
-        return message.channel.send({ embeds: [new EmbedBuilder().setTitle('Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(EMBED_COLOR)] });
-    }
-
-    if (command === 'auth' || command === 'authed') {
-        if (message.author.id !== OWNER_ID) return;
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const now = Date.now();
-        const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
-
-        const authEmbed = new EmbedBuilder()
-            .setTitle('Authorization & Stock Statistics')
-            .setColor(EMBED_COLOR)
-            .addFields(
-                { name: 'Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: 'All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
-                { name: 'Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
-            );
-        return message.channel.send({ embeds: [authEmbed] });
-    }
-
-    if (command === 'status') {
-        if (message.author.id !== OWNER_ID) return;
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const uptimeSeconds = Math.floor(client.uptime / 1000);
-        const hours = Math.floor(uptimeSeconds / 3600);
-        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-        const seconds = uptimeSeconds % 60;
-        const statusEmbed = new EmbedBuilder()
-            .setTitle('Flex Farmer Status')
-            .setColor(EMBED_COLOR)
-            .addFields(
-                { name: 'Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
-                { name: 'Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
-            );
-        return message.channel.send({ embeds: [statusEmbed] });
-    }
-
-    if (command === 'restock') {
-        if (message.author.id !== OWNER_ID) return;
-        const dbData = readDB();
-        const users = Object.values(dbData.users);
-        const amount = parseInt(args[0]) || users.length;
-        dbData.restockCounter = amount;
-        dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + amount;
-        writeDB(dbData);
-
-        const promptEmbed = new EmbedBuilder()
-            .setTitle('Restock Stock Prepared')
-            .setDescription(`Successfully stocked **${amount}** authorized users.\n\n**Send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
-            .setColor(EMBED_COLOR);
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('restock_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId('restock_no').setLabel('No').setStyle(ButtonStyle.Danger)
-        );
-
-        return message.channel.send({ embeds: [promptEmbed], components: [row] });
-    }
-
-    if (command === 'remove') {
-        if (message.author.id !== OWNER_ID) return;
-        const amount = parseInt(args[0]) || 1;
-        let dbData = readDB();
-        let userKeys = Object.keys(dbData.users);
-        for (let i = 0; i < Math.min(amount, userKeys.length); i++) {
-            delete dbData.users[userKeys[i]];
-        }
-        writeDB(dbData);
-        const remainingStock = Object.keys(dbData.users).length;
-        return message.channel.send(`Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
+        return webhookClient.send({ content: 'Only the join command is available to regular members.' });
     }
 
     if (command === 'join') {
         const targetGuildId = args[0];
-        if (!targetGuildId) return message.channel.send(`Please provide a Server ID: \`${currentPrefix}join <server_id>\``);
+        if (!targetGuildId) {
+            return webhookClient.send({ content: `Please provide a Server ID: \`${currentPrefix}join <server_id>\`` });
+        }
 
         const dbData = readDB();
         let tokensToUse = Object.values(dbData.users);
         if (tokensToUse.length === 0) {
-            return message.channel.send({ embeds: [new EmbedBuilder().setTitle('Out of Stock').setDescription(`No accounts available.`).setColor(EMBED_COLOR)] });
+            const outOfStockEmbed = new EmbedBuilder().setTitle('Out of Stock').setDescription(`No accounts available.`).setColor(EMBED_COLOR);
+            return webhookClient.send({ embeds: [outOfStockEmbed] });
         }
 
         const roleLimits = [
@@ -628,7 +353,8 @@ client.on('messageCreate', async message => {
                     .setTitle('Bot Error')
                     .setDescription(`The bot is not in this server yet. Please go to <#${CHANNELS.ADD_BOT}> and invite it to your server.\n\nOnce the bot has joined, try using the command again.`)
                     .setColor(EMBED_COLOR);
-                return message.channel.send({ embeds: [errorEmbed] });
+                
+                return webhookClient.send({ embeds: [errorEmbed] });
             }
         } catch (e) {
             console.error('Failed to check guild membership:', e);
@@ -644,7 +370,7 @@ client.on('messageCreate', async message => {
             .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
             .setColor(EMBED_COLOR);
         
-        await message.channel.send({ embeds: [addingEmbed] });
+        await webhookClient.send({ embeds: [addingEmbed] });
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
