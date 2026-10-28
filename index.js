@@ -156,83 +156,85 @@ app.get('/', async (req, res) => {
             'Content-Type': 'application/x-www-form-urlencoded'
         });
 
-        if (tokenRes.data && tokenRes.data.access_token) {
-            const oauthData = tokenRes.data;
-            const userRes = await getHttps('https://discord.com/api/users/@me', {
-                'Authorization': `Bearer ${oauthData.access_token}`
-            });
-            const userData = userRes.data;
-
-            if (!userData || !userData.id) {
-                return res.send(`
-                    <html>
-                        <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                            <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                                <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
-                                <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Failed to retrieve your Discord user profile.</p>
-                            </div>
-                        </body>
-                    </html>
-                `);
-            }
-
-            let dbData = readDB();
-            dbData.users[userData.id] = {
-                user_id: userData.id,
-                username: userData.username,
-                avatar: userData.avatar,
-                banner: userData.banner,
-                access_token: oauthData.access_token,
-                refresh_token: oauthData.refresh_token,
-                authorized_at: Date.now(),
-                expires_at: Date.now() + (oauthData.expires_in * 1000)
-            };
-            dbData.restockCounter = (dbData.restockCounter || 0) + 1;
-            dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + 1;
-            writeDB(dbData);
-
-            const totalStock = Object.keys(dbData.users).length;
-
-            if (client.isReady()) {
-                try {
-                    let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
-                    if (verifLogChannel) {
-                        const logEmbed = new EmbedBuilder()
-                            .setTitle('New User Verified')
-                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\nTotal Available Stock: \`${totalStock}\``)
-                            .setColor(EMBED_COLOR)
-                            .setTimestamp();
-
-                        await verifLogChannel.send({ embeds: [logEmbed] });
-                    }
-                } catch (logErr) {
-                    console.error('[VERIFICATION LOG ERROR]', logErr);
-                }
-            }
-
-            return res.send(`
-                <html>
-                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
-                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                            <h2 style="color:#55ff55;margin-bottom:15px;font-weight:600;">Verification Successful</h2>
-                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
-                        </div>
-                    </body>
-                </html>
-            `);
-        } else {
-            console.error('[OAUTH TOKEN ERROR]', tokenRes.data);
+        // Debug log to Railway console if token exchange fails
+        if (tokenRes.status !== 200 || !tokenRes.data || !tokenRes.data.access_token) {
+            console.error('[OAUTH TOKEN ERROR DETAILS] Status:', tokenRes.status, 'Data:', JSON.stringify(tokenRes.data));
             return res.send(`
                 <html>
                     <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
                         <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
                             <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
-                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord.</p>
+                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord (Check CLIENT_SECRET in Railway).</p>
                         </div>
                     </body>
                 </html>
             `);
         }
+
+        const oauthData = tokenRes.data;
+        const userRes = await getHttps('https://discord.com/api/users/@me', {
+            'Authorization': `Bearer ${oauthData.access_token}`
+        });
+        const userData = userRes.data;
+
+        if (!userData || !userData.id) {
+            return res.send(`
+                <html>
+                    <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                        <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                            <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
+                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Failed to retrieve your Discord user profile.</p>
+                        </div>
+                    </body>
+                </html>
+            `);
+        }
+
+        let dbData = readDB();
+        dbData.users[userData.id] = {
+            user_id: userData.id,
+            username: userData.username,
+            avatar: userData.avatar,
+            banner: userData.banner,
+            access_token: oauthData.access_token,
+            refresh_token: oauthData.refresh_token,
+            authorized_at: Date.now(),
+            expires_at: Date.now() + (oauthData.expires_in * 1000)
+        };
+        dbData.restockCounter = (dbData.restockCounter || 0) + 1;
+        dbData.allTimeAuthCount = (dbData.allTimeAuthCount || 0) + 1;
+        writeDB(dbData);
+
+        const totalStock = Object.keys(dbData.users).length;
+
+        // Ensure the main Farmer bot sends the verification log to channel 1563253454653235261
+        if (client.isReady()) {
+            try {
+                let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
+                if (verifLogChannel) {
+                    const logEmbed = new EmbedBuilder()
+                        .setTitle('New User Verified')
+                        .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\nTotal Available Stock: \`${totalStock}\``)
+                        .setColor(EMBED_COLOR)
+                        .setTimestamp();
+
+                    await verifLogChannel.send({ embeds: [logEmbed] });
+                }
+            } catch (logErr) {
+                console.error('[VERIFICATION LOG ERROR]', logErr);
+            }
+        }
+
+        return res.send(`
+            <html>
+                <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
+                    <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                        <h2 style="color:#55ff55;margin-bottom:15px;font-weight:600;">Verification Successful</h2>
+                        <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
+                    </div>
+                </body>
+            </html>
+        `);
     } catch (error) {
         console.error('[OAUTH EXCEPTION]', error);
         return res.send(`
