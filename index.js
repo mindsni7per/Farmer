@@ -449,7 +449,7 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'verify' || command === 'link') {
-        const oauthUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
+        const oauthUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&scope=guilds.join+identify';
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
