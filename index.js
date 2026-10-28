@@ -144,19 +144,20 @@ app.get('/', async (req, res) => {
 
     try {
         const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1564997108908556369';
+        const verificationClientSecret = process.env.VERIFICATION_CLIENT_SECRET || process.env.CLIENT_SECRET;
+
         const tokenParams = new URLSearchParams({
             client_id: verificationClientId,
-            client_secret: process.env.CLIENT_SECRET,
+            client_secret: verificationClientSecret,
             grant_type: 'authorization_code',
             code: code,
-            redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app',
+            redirect_uri: process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app/',
         }).toString();
 
         const tokenRes = await postHttps('https://discord.com/api/oauth2/token', tokenParams, {
             'Content-Type': 'application/x-www-form-urlencoded'
         });
 
-        // Debug log to Railway console if token exchange fails
         if (tokenRes.status !== 200 || !tokenRes.data || !tokenRes.data.access_token) {
             console.error('[OAUTH TOKEN ERROR DETAILS] Status:', tokenRes.status, 'Data:', JSON.stringify(tokenRes.data));
             return res.send(`
@@ -164,7 +165,7 @@ app.get('/', async (req, res) => {
                     <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;text-align:center;padding-top:80px;">
                         <div style="max-width:400px;margin:0 auto;background:#2b2d31;padding:40px;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
                             <h2 style="color:#ff5555;margin-bottom:15px;font-weight:600;">Verification Failed</h2>
-                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord (Check CLIENT_SECRET in Railway).</p>
+                            <p style="color:#b5bac1;font-size:14px;line-height:1.5;">Token exchange was rejected by Discord (Check VERIFICATION_CLIENT_SECRET in Railway).</p>
                         </div>
                     </body>
                 </html>
@@ -207,7 +208,6 @@ app.get('/', async (req, res) => {
 
         const totalStock = Object.keys(dbData.users).length;
 
-        // Ensure the main Farmer bot sends the verification log to channel 1563253454653235261
         if (client.isReady()) {
             try {
                 let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
