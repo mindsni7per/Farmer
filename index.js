@@ -35,13 +35,15 @@ const LIVE_STOCK_TOKEN = 'P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDA
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
-// --- Built-in File Persistence Setup ---
+// --- Persistent File Storage Setup (survives Railway redeploys if persistent volume is attached, or keeps local JSON state) ---
 const DB_FILE = path.join(__dirname, 'database.json');
 
 function readDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockWebhookMessageId: null }, null, 2));
+            const initialData = { users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockWebhookMessageId: null };
+            fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2));
+            return initialData;
         }
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
@@ -50,7 +52,11 @@ function readDB() {
 }
 
 function writeDB(data) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {
+        console.error('Failed to save database progress:', e);
+    }
 }
 
 // --- Built-in HTTPS Request Helpers ---
@@ -472,7 +478,7 @@ client.on('messageCreate', async message => {
         }, 7000);
     }
 
-    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === '.rbot') {
+    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === .rbot) {
         const rbotEmbed = new EmbedBuilder().setDescription('Use the bot via the button below.').setColor(EMBED_COLOR);
         const rbotButton = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('Use Bot').setStyle(ButtonStyle.Link).setURL(RBOT_SERVER_INVITE)
@@ -491,12 +497,13 @@ client.on('messageCreate', async message => {
         return message.channel.send('Only the join command is available to regular members.');
     }
 
-    // --- Added: ,verify prefix command without webhooks ---
+    // --- ,verify prefix command: Includes markdown verify link BEFORE the button, and the Verify Here button ---
     if (command === 'verify') {
         if (message.author.id !== OWNER_ID) return;
         const verifyContent = 
             `### Why should you verify?\n\n` +
-            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.`;
+            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.\n\n` +
+            `👉 [Click here to verify via browser link](${AUTOMATIC_VERIFY_OAUTH_URL})`;
 
         const embed = new EmbedBuilder()
             .setDescription(verifyContent)
@@ -527,7 +534,7 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: 'Core & Verification', 
-                    value: `\`${currentPrefix}verify\` - Send verification panel with link button\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                    value: `\`${currentPrefix}verify\` - Send verification panel with link and button\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: 'Config & Management', 
@@ -539,7 +546,6 @@ client.on('messageCreate', async message => {
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
-    // --- Fixed: ,bot command sends strictly the add bot button with zero embeds or descriptions ---
     if (command === 'bot' || command === 'invite') {
         if (message.author.id !== OWNER_ID) return;
         const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
