@@ -312,8 +312,7 @@ async function updateLiveStockPanel() {
             }
         }
 
-        // Send via dedicated live stock webhook client using standard payload structure
-        const newMsg = await WEBHOOKS.LIVE_STOCK.send({ embeds: [stockEmbed], wait: true });
+        const newMsg = await stockChannel.send({ embeds: [stockEmbed] });
         dbData.liveStockMessageId = newMsg.id;
         writeDB(dbData);
     } catch (err) {
@@ -399,9 +398,9 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
             }
 
-            // Fixed: Now correctly sends BOTH the embed and components (buttons) through the Verification webhook
-            await WEBHOOKS.VERIFICATION.send({ embeds: [embed], components: [row] });
-            return interaction.reply({ content: 'Verification embed with link button created successfully!', ephemeral: true });
+            // Sends natively via bot client channel so the button renders reliably
+            await interaction.channel.send({ embeds: [embed], components: [row] });
+            return interaction.reply({ content: 'Verification panel with link button created successfully!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
         }
@@ -628,6 +627,7 @@ client.on('messageCreate', async message => {
             return WEBHOOKS.EXECUTION.send({ embeds: [outOfStockEmbed] });
         }
 
+        // Updated role limits: 2, 4, 6, 8, 10, 12, 20
         const roleLimits = [
             { id: '1564676932195455047', limit: 2 },   
             { id: '1563467132107231253', limit: 4 },   
