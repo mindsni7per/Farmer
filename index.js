@@ -478,7 +478,7 @@ client.on('messageCreate', async message => {
         }, 7000);
     }
 
-    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === .rbot) {
+    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === 'rbot') {
         const rbotEmbed = new EmbedBuilder().setDescription('Use the bot via the button below.').setColor(EMBED_COLOR);
         const rbotButton = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('Use Bot').setStyle(ButtonStyle.Link).setURL(RBOT_SERVER_INVITE)
@@ -503,7 +503,7 @@ client.on('messageCreate', async message => {
         const verifyContent = 
             `### Why should you verify?\n\n` +
             `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.\n\n` +
-            `👉 [Click here to verify via browser link](${AUTOMATIC_VERIFY_OAUTH_URL})`;
+            `👉 [verify](${AUTOMATIC_VERIFY_OAUTH_URL})`;
 
         const embed = new EmbedBuilder()
             .setDescription(verifyContent)
